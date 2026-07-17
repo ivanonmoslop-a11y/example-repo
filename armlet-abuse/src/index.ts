@@ -42,9 +42,6 @@ const enum AbuseState {
 	Settling
 }
 
-/** Settling waits until at least this share of the bonus HP has actually arrived. */
-const SETTLE_GAIN_FRACTION = 0.5
-
 new (class ArmletAbuse {
 	private readonly menu = new MenuManager()
 	private readonly dot = new DotTracker()
@@ -56,10 +53,9 @@ new (class ArmletAbuse {
 
 	private state = AbuseState.Idle
 	private armlet: Nullable<item_armlet>
-	/** HP seen the moment the bonus came back, -1 once the gain is visible. */
-	private armHP = -1
-	/** HP the refill must reach before Settling is considered done. */
-	private settleTarget = 0
+	/** HP at the moment the burst was issued; the refill is confirmed once HP exceeds
+	 * it. -1 when no gain is pending. */
+	private preBurstHP = -1
 	private debugText = ""
 
 	constructor() {
@@ -109,7 +105,7 @@ new (class ArmletAbuse {
 
 		const active = hero.HasBuffByName(item_armlet.ModifierName)
 		const bonusHP = this.GetBonusHP(armlet)
-		const cycle = this.CycleDuration(armlet)
+		const cycle = this.CycleDuration()
 		this.UpdateDebug(hero, bonusHP, cycle)
 
 		// Mid-abuse: only advance the machine, never evaluate a fresh trigger.
@@ -198,17 +194,17 @@ new (class ArmletAbuse {
 		// Both toggle orders in one frame — the shortest possible 1-HP window.
 		hero.CastToggle(armlet, false, false)
 		hero.CastToggle(armlet, true, false)
-		this.EnterBursting()
+		this.EnterBursting(hero)
 	}
 
 	private BeginToggleOn(hero: Unit, armlet: item_armlet): void {
 		this.IssueToggle(hero, armlet)
-		this.EnterBursting()
+		this.EnterBursting(hero)
 	}
 
-	private EnterBursting(): void {
+	private EnterBursting(hero: Unit): void {
 		this.state = AbuseState.Bursting
-		this.armHP = -1
+		this.preBurstHP = hero.HP
 		// Two round-trips: the off and the paired on go out, and the bonus modifier
 		// makes the trip back. Long enough that a normal "on" has reflected before the
 		// resend path is even considered. ModifierCreated ends Bursting sooner.
@@ -216,33 +212,45 @@ new (class ArmletAbuse {
 	}
 
 	private EnterSettling(hero: Nullable<Unit>): void {
-		this.state = AbuseState.Settling
 		this.lock.ResetTimer()
-		this.armHP = hero?.HP ?? -1
-		const bonusHP = this.armlet !== undefined && this.armlet.IsValid ? this.GetBonusHP(this.armlet) : 0
-		this.settleTarget = this.armHP + bonusHP * SETTLE_GAIN_FRACTION
+		// Refill usually lands in the same update as the modifier: HP is already above
+		// the pre-burst read, so the machine goes straight back to Idle and the next
+		// burst can fire on the very next frame — no dead time between abuses.
+		if (hero !== undefined && this.GainVisible(hero)) {
+			this.state = AbuseState.Idle
+			this.preBurstHP = -1
+			return
+		}
+		this.state = AbuseState.Settling
 		this.settle.Sleep(this.RoundTrip + GameState.TickInterval * 2000)
 	}
 
 	private HasSettled(hero: Unit): boolean {
-		if (this.armHP < 0) {
+		if (this.preBurstHP < 0) {
 			return true
 		}
-		if (hero.HP >= this.settleTarget || !this.settle.Sleeping) {
-			this.armHP = -1
+		if (this.GainVisible(hero) || !this.settle.Sleeping) {
+			this.preBurstHP = -1
 			return true
 		}
 		return false
+	}
+
+	/** The refill has propagated: HP is above what it was when the burst went out. */
+	private GainVisible(hero: Unit): boolean {
+		return hero.HP > this.preBurstHP
 	}
 
 	private IssueToggle(hero: Unit, armlet: item_armlet): void {
 		hero.CastToggle(armlet, false, false)
 	}
 
-	/** The stretch the hero can be stuck at 1 HP: the drop reaches the server, the
-	 * toggle cooldown passes, and the re-arm makes the trip back. */
-	private CycleDuration(armlet: item_armlet): number {
-		return 2 * GameState.InputLag + armlet.ToggleCooldown + GameState.TickInterval
+	/** The stretch the hero can be stuck at 1 HP. Both toggle orders travel in the same
+	 * packet, so the server applies the off and the paired on within a tick or two of
+	 * each other — the toggle cooldown does not stretch the window. Only the trip to the
+	 * server plus that server-side gap matters. */
+	private CycleDuration(): number {
+		return GameState.InputLag + 2 * GameState.TickInterval
 	}
 
 	/** HP at or below which a burst fires. Capped at the bonus — a refill cannot take
@@ -315,8 +323,7 @@ new (class ArmletAbuse {
 
 	private Reset(): void {
 		this.state = AbuseState.Idle
-		this.armHP = -1
-		this.settleTarget = 0
+		this.preBurstHP = -1
 		this.lock.ResetTimer()
 		this.settle.ResetTimer()
 	}

@@ -17,12 +17,10 @@ import {
 import { HasShatter } from "./debuffs"
 import { DotTracker } from "./dot"
 import { MenuManager } from "./menu"
+import { ThreatTracker } from "./threats"
 
-// Strength ramps over 0.6s (4.17 str per 0.1s × 6 = 25 str = 550 HP).
-// Must wait for the full ramp before the next burst, otherwise we re-burst
-// at ~90 HP and the hero never climbs above that.
 const RAMP_DURATION = 0.6
-const RAMP_MARGIN = 0.15
+const RAMP_MARGIN = 0.1
 
 const enum AbuseState {
 	Idle,
@@ -33,6 +31,7 @@ const enum AbuseState {
 new (class ArmletAbuse {
 	private readonly menu = new MenuManager()
 	private readonly dot = new DotTracker()
+	private readonly threats = new ThreatTracker()
 
 	private readonly lock = new TickSleeper()
 	private readonly rampSleep = new TickSleeper()
@@ -124,8 +123,24 @@ new (class ArmletAbuse {
 		if (hero.HP > this.Threshold(bonusHP)) {
 			return false
 		}
-		const cycle = GameState.InputLag + 2 * GameState.TickInterval
-		return this.dot.NextTickTime() - GameState.RawGameTime > cycle
+
+		const cycle = this.CycleDuration()
+		const now = GameState.RawGameTime
+
+		if (this.dot.NextTickTime() - now <= cycle) {
+			return false
+		}
+
+		const threatETA = this.threats.EarliestThreatTime(hero)
+		if (threatETA - now <= cycle) {
+			return false
+		}
+
+		return true
+	}
+
+	private CycleDuration(): number {
+		return GameState.InputLag + 2 * GameState.TickInterval
 	}
 
 	private AdvanceBursting(hero: Unit, armlet: item_armlet, active: boolean): void {
@@ -249,14 +264,18 @@ new (class ArmletAbuse {
 		if (!this.menu.ShowDebug.value) {
 			return
 		}
-		const tick = this.dot.NextTickTime() - GameState.RawGameTime
-		const tickText = Number.isFinite(tick) ? `${Math.round(tick * 1000)}ms` : "none"
-		const cycle = GameState.InputLag + 2 * GameState.TickInterval
+		const now = GameState.RawGameTime
+		const dotTick = this.dot.NextTickTime() - now
+		const dotText = Number.isFinite(dotTick) ? `${Math.round(dotTick * 1000)}ms` : "none"
+		const cycle = this.CycleDuration()
+		const threatETA = this.threats.EarliestThreatTime(hero) - now
+		const threatText = Number.isFinite(threatETA) ? `${Math.round(threatETA * 1000)}ms` : "none"
 		const rampLeft = this.rampSleep.Sleeping ? Math.round(this.rampSleep.RemainingSleepTime) : 0
+		const incoming = Math.round(this.threats.TotalIncomingDamage(hero, cycle + RAMP_DURATION))
 		this.debugText =
-			`${this.StateName} | hp ${hero.HP}/${Math.round(this.Threshold(bonusHP))} of ${Math.round(bonusHP)}` +
-			` | dot ${tickText} vs ${Math.round(cycle * 1000)}ms` +
-			` | ramp ${rampLeft}ms`
+			`${this.StateName} | hp ${hero.HP}/${Math.round(this.Threshold(bonusHP))}` +
+			` | dot ${dotText} | threat ${threatText}` +
+			` | dmg ${incoming} | ramp ${rampLeft}ms`
 	}
 
 	private get StateName(): string {
@@ -288,6 +307,7 @@ new (class ArmletAbuse {
 	private GameEnded(): void {
 		this.Reset()
 		this.dot.Reset()
+		this.threats.Reset()
 		this.armlet = undefined
 		this.debugText = ""
 	}

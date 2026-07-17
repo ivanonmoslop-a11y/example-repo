@@ -167,7 +167,7 @@ new (class ArmletAbuse {
 
 	private Burst(hero: Unit, armlet: item_armlet): void {
 		hero.CastToggle(armlet, false, false)
-		hero.CastToggle(armlet, true, false)
+		hero.CastToggle(armlet, true)
 		this.state = AbuseState.Bursting
 		this.lock.Sleep(2 * this.RoundTrip + GameState.TickInterval * 2000)
 	}

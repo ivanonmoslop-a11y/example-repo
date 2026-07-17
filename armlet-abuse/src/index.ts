@@ -17,7 +17,6 @@ import {
 import { HasShatter } from "./debuffs"
 import { DotTracker } from "./dot"
 import { MenuManager } from "./menu"
-import { ThreatTracker } from "./threats"
 
 const RAMP_DURATION = 0.6
 const RAMP_MARGIN = 0.1
@@ -31,7 +30,6 @@ const enum AbuseState {
 new (class ArmletAbuse {
 	private readonly menu = new MenuManager()
 	private readonly dot = new DotTracker()
-	private readonly threats = new ThreatTracker()
 
 	private readonly lock = new TickSleeper()
 	private readonly rampSleep = new TickSleeper()
@@ -131,11 +129,6 @@ new (class ArmletAbuse {
 			return false
 		}
 
-		const threatETA = this.threats.EarliestThreatTime(hero)
-		if (threatETA - now <= cycle) {
-			return false
-		}
-
 		return true
 	}
 
@@ -167,15 +160,15 @@ new (class ArmletAbuse {
 
 	private Burst(hero: Unit, armlet: item_armlet): void {
 		hero.CastToggle(armlet, false, false)
-		hero.CastToggle(armlet, true)
+		hero.CastToggle(armlet, false, false)
 		this.state = AbuseState.Bursting
-		this.lock.Sleep(2 * this.RoundTrip + GameState.TickInterval * 2000)
+		this.lock.Sleep(this.RoundTrip + GameState.TickInterval * 1000)
 	}
 
 	private ToggleOn(hero: Unit, armlet: item_armlet): void {
 		this.IssueToggle(hero, armlet)
 		this.state = AbuseState.Bursting
-		this.lock.Sleep(2 * this.RoundTrip + GameState.TickInterval * 2000)
+		this.lock.Sleep(this.RoundTrip + GameState.TickInterval * 1000)
 	}
 
 	private EnterRamping(): void {
@@ -267,15 +260,10 @@ new (class ArmletAbuse {
 		const now = GameState.RawGameTime
 		const dotTick = this.dot.NextTickTime() - now
 		const dotText = Number.isFinite(dotTick) ? `${Math.round(dotTick * 1000)}ms` : "none"
-		const cycle = this.CycleDuration()
-		const threatETA = this.threats.EarliestThreatTime(hero) - now
-		const threatText = Number.isFinite(threatETA) ? `${Math.round(threatETA * 1000)}ms` : "none"
 		const rampLeft = this.rampSleep.Sleeping ? Math.round(this.rampSleep.RemainingSleepTime) : 0
-		const incoming = Math.round(this.threats.TotalIncomingDamage(hero, cycle + RAMP_DURATION))
 		this.debugText =
 			`${this.StateName} | hp ${hero.HP}/${Math.round(this.Threshold(bonusHP))}` +
-			` | dot ${dotText} | threat ${threatText}` +
-			` | dmg ${incoming} | ramp ${rampLeft}ms`
+			` | dot ${dotText} | ramp ${rampLeft}ms`
 	}
 
 	private get StateName(): string {
@@ -307,7 +295,6 @@ new (class ArmletAbuse {
 	private GameEnded(): void {
 		this.Reset()
 		this.dot.Reset()
-		this.threats.Reset()
 		this.armlet = undefined
 		this.debugText = ""
 	}

@@ -11,12 +11,16 @@ import {
 	LocalPlayer,
 	RendererSDK,
 	Unit,
+	Vector2,
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
 import { MenuManager } from "./menu"
 
 const TURN_CONE = 0.5
+const SECTOR_STEPS = 16
+const SECTOR_WIDTH = 2
+const SECTOR_COLOR = new Color(0, 255, 255)
 
 new (class BlinkSpam {
 	private readonly menu = new MenuManager()
@@ -62,26 +66,7 @@ new (class BlinkSpam {
 		if (!this.menu.BlinkKey.isPressed) {
 			return
 		}
-		hero.CastPosition(blink, this.BlinkPosition(hero, blink), false, false)
-	}
-
-	private BlinkPosition(hero: Hero, blink: item_blink): Vector3 {
-		const cursor = InputManager.CursorOnWorld
-		if (hero.IsAlive) {
-			return cursor
-		}
-		const toCursor = cursor.Subtract(hero.Position)
-		const range = Math.min(Math.max(toCursor.Length2D, 200), blink.CastRange)
-		let delta = toCursor.Angle - hero.RotationRad
-		while (delta > Math.PI) {
-			delta -= 2 * Math.PI
-		}
-		while (delta < -Math.PI) {
-			delta += 2 * Math.PI
-		}
-		const clamped = Math.max(-TURN_CONE, Math.min(TURN_CONE, delta))
-		const direction = Vector3.FromAngle(hero.RotationRad + clamped)
-		return hero.Position.Add(direction.MultiplyScalar(range))
+		hero.CastPosition(blink, InputManager.CursorOnWorld, false, false)
 	}
 
 	private GetBlink(hero: Hero): Nullable<item_blink> {
@@ -102,11 +87,17 @@ new (class BlinkSpam {
 	}
 
 	private Draw(): void {
-		if (this.debugText.length === 0) {
+		if (!this.menu.State.value || !this.InGame) {
 			return
 		}
 		const hero = this.Hero
 		if (hero === undefined) {
+			return
+		}
+		if (this.menu.ShowSector.value) {
+			this.DrawSector(hero)
+		}
+		if (this.debugText.length === 0) {
 			return
 		}
 		const pos = RendererSDK.WorldToScreen(hero.RealPosition)
@@ -114,6 +105,35 @@ new (class BlinkSpam {
 			return
 		}
 		RendererSDK.Text(this.debugText, pos, Color.White)
+	}
+
+	private DrawSector(hero: Hero): void {
+		const blink = this.blink
+		if (blink === undefined || !blink.IsValid) {
+			return
+		}
+		const origin = hero.RealPosition
+		const start = RendererSDK.WorldToScreen(origin)
+		if (start === undefined) {
+			return
+		}
+		const facing = hero.RotationRad
+		const range = blink.CastRange
+		let prev: Nullable<Vector2>
+		for (let i = 0; i <= SECTOR_STEPS; i++) {
+			const angle = facing - TURN_CONE + (2 * TURN_CONE * i) / SECTOR_STEPS
+			const world = Vector3.FromAngle(angle).MultiplyScalar(range).AddForThis(origin)
+			const screen = RendererSDK.WorldToScreen(world)
+			if (screen !== undefined) {
+				if (prev !== undefined) {
+					RendererSDK.Line(prev, screen, SECTOR_COLOR, SECTOR_WIDTH)
+				}
+				if (i === 0 || i === SECTOR_STEPS) {
+					RendererSDK.Line(start, screen, SECTOR_COLOR, SECTOR_WIDTH)
+				}
+			}
+			prev = screen
+		}
 	}
 
 	private UnitItemsChanged(unit: Unit): void {

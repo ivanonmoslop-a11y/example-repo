@@ -7,6 +7,7 @@ export class MenuManager {
 
 	public readonly State: Menu.Toggle
 	public readonly BlinkKey: Menu.KeyBind
+	public readonly ShowSector: Menu.Toggle
 	public readonly ShowDebug: Menu.Toggle
 
 	constructor() {
@@ -15,6 +16,11 @@ export class MenuManager {
 			"Blink Key",
 			"None",
 			"Set to the SAME key as your blink item slot.\nWhile held, blink casts are spammed every tick —\neven while dead, so it fires instantly on revive"
+		)
+		this.ShowSector = this.tree.AddToggle(
+			"Show Instant Sector",
+			true,
+			"Draw the cone where a blink needs no turn\nand fires instantly on the first tick"
 		)
 		this.ShowDebug = this.tree.AddToggle("Show Debug", false)
 	}

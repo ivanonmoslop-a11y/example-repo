@@ -15,7 +15,7 @@ import {
 } from "github.com/octarine-public/wrapper/index"
 
 import { AttackTracker } from "./attacks"
-import { HasShatter } from "./debuffs"
+import { HasForbiddenDebuff, InDangerZone } from "./debuffs"
 import { DotTracker } from "./dot"
 import { MenuManager } from "./menu"
 
@@ -114,7 +114,7 @@ new (class ArmletAbuse {
 		if (bonusHP <= 0 || !this.CanToggle(hero)) {
 			return false
 		}
-		if (HasShatter(hero)) {
+		if (HasForbiddenDebuff(hero) || InDangerZone(hero)) {
 			return false
 		}
 		if (hero.HP >= bonusHP) {
@@ -270,9 +270,10 @@ new (class ArmletAbuse {
 		const atkHit = this.attacks.NextImpactTime(hero) - now
 		const atkText = Number.isFinite(atkHit) ? `${Math.round(atkHit * 1000)}ms` : "none"
 		const rampLeft = this.rampSleep.Sleeping ? Math.round(this.rampSleep.RemainingSleepTime) : 0
+		const blocked = HasForbiddenDebuff(hero) ? " | FORBID" : InDangerZone(hero) ? " | ZONE" : ""
 		this.debugText =
 			`${this.StateName} | hp ${hero.HP}/${Math.round(this.Threshold(bonusHP))}` +
-			` | dot ${dotText} | atk ${atkText} | ramp ${rampLeft}ms`
+			` | dot ${dotText} | atk ${atkText} | ramp ${rampLeft}ms${blocked}`
 	}
 
 	private get StateName(): string {

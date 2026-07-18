@@ -10,10 +10,13 @@ import {
 	item_blink,
 	LocalPlayer,
 	RendererSDK,
-	Unit
+	Unit,
+	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
 import { MenuManager } from "./menu"
+
+const TURN_CONE = 0.5
 
 new (class BlinkSpam {
 	private readonly menu = new MenuManager()
@@ -59,7 +62,26 @@ new (class BlinkSpam {
 		if (!this.menu.BlinkKey.isPressed) {
 			return
 		}
-		hero.CastPosition(blink, InputManager.CursorOnWorld, false, false)
+		hero.CastPosition(blink, this.BlinkPosition(hero, blink), false, false)
+	}
+
+	private BlinkPosition(hero: Hero, blink: item_blink): Vector3 {
+		const cursor = InputManager.CursorOnWorld
+		if (hero.IsAlive) {
+			return cursor
+		}
+		const toCursor = cursor.Subtract(hero.Position)
+		const range = Math.min(Math.max(toCursor.Length2D, 200), blink.CastRange)
+		let delta = toCursor.Angle - hero.RotationRad
+		while (delta > Math.PI) {
+			delta -= 2 * Math.PI
+		}
+		while (delta < -Math.PI) {
+			delta += 2 * Math.PI
+		}
+		const clamped = Math.max(-TURN_CONE, Math.min(TURN_CONE, delta))
+		const direction = Vector3.FromAngle(hero.RotationRad + clamped)
+		return hero.Position.Add(direction.MultiplyScalar(range))
 	}
 
 	private GetBlink(hero: Hero): Nullable<item_blink> {

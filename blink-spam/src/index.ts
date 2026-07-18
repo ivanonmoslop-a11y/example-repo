@@ -17,7 +17,7 @@ import {
 
 import { MenuManager } from "./menu"
 
-const TURN_CONE = 0.5
+const TURN_CONE = (11.5 * Math.PI) / 180
 const SECTOR_STEPS = 16
 const SECTOR_WIDTH = 2
 const SECTOR_COLOR = new Color(0, 255, 255)

@@ -5,6 +5,7 @@ import {
 	EventsSDK,
 	GameRules,
 	GameState,
+	Hero,
 	InputManager,
 	item_blink,
 	LocalPlayer,
@@ -26,9 +27,9 @@ new (class BlinkSpam {
 		EventsSDK.on("GameEnded", this.GameEnded.bind(this))
 	}
 
-	private get Hero(): Nullable<Unit> {
+	private get Hero(): Nullable<Hero> {
 		const hero = LocalPlayer?.Hero
-		if (hero === undefined || !hero.IsValid || !hero.IsAlive) {
+		if (hero === undefined || !hero.IsValid) {
 			return undefined
 		}
 		return hero
@@ -54,14 +55,14 @@ new (class BlinkSpam {
 		if (blink === undefined) {
 			return
 		}
-		this.UpdateDebug(blink)
-		if (!this.menu.SpamKey.isPressed) {
+		this.UpdateDebug(hero, blink)
+		if (!this.menu.BlinkKey.isPressed) {
 			return
 		}
 		hero.CastPosition(blink, InputManager.CursorOnWorld, false, false)
 	}
 
-	private GetBlink(hero: Unit): Nullable<item_blink> {
+	private GetBlink(hero: Hero): Nullable<item_blink> {
 		if (this.blink !== undefined && this.blink.IsValid) {
 			return this.blink
 		}
@@ -69,13 +70,13 @@ new (class BlinkSpam {
 		return this.blink
 	}
 
-	private UpdateDebug(blink: item_blink): void {
+	private UpdateDebug(hero: Hero, blink: item_blink): void {
 		if (!this.menu.ShowDebug.value) {
 			return
 		}
 		const cd = Math.round(blink.Cooldown * 1000)
-		const spam = this.menu.SpamKey.isPressed ? "spam" : "idle"
-		this.debugText = `${spam} | cd ${cd}ms`
+		const state = this.menu.BlinkKey.isPressed ? (hero.IsAlive ? "spam" : "spam-dead") : "idle"
+		this.debugText = `${state} | cd ${cd}ms`
 	}
 
 	private Draw(): void {
@@ -100,7 +101,7 @@ new (class BlinkSpam {
 	}
 
 	private GameEnded(): void {
-		this.menu.SpamKey.isPressed = false
+		this.menu.BlinkKey.isPressed = false
 		this.blink = undefined
 		this.debugText = ""
 	}

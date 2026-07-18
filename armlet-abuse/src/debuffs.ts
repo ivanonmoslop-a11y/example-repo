@@ -40,6 +40,7 @@ export const KNOWN_DOTS: readonly (readonly [string, number])[] = [
 	// 1s and slower hero ticks
 	["modifier_viper_nethertoxin", 1],
 	["modifier_venomancer_poison_sting", 1],
+	["modifier_venomancer_poison_sting_ward", 1],
 	["modifier_venomancer_venomous_gale", 1],
 	["modifier_venomancer_poison_nova", 1],
 	["modifier_huskar_burning_spear_debuff", 1],
@@ -75,6 +76,11 @@ export const KNOWN_DOTS: readonly (readonly [string, number])[] = [
 	["modifier_viper_viper_strike_slow", 0.5],
 	["modifier_snapfire_magma_burn_slow", 0.5],
 	["modifier_phoenix_sun_debuff", 0.5],
+	["modifier_venomancer_noxious_plague_primary", 0.5],
+	["modifier_venomancer_noxious_plague_secondary", 0.5],
+	["modifier_venomancer_snakebite", 0.5],
+	["modifier_venomancer_latent_poison", 0.5],
+	["modifier_venomancer_sepsis", 0.5],
 	// continuous — no safe gap while the debuff is on
 	["modifier_death_prophet_spirit_siphon", 0.25],
 	["modifier_disruptor_static_storm", 0.25],

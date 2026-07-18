@@ -14,6 +14,7 @@ import {
 	Unit
 } from "github.com/octarine-public/wrapper/index"
 
+import { AttackTracker } from "./attacks"
 import { HasShatter } from "./debuffs"
 import { DotTracker } from "./dot"
 import { MenuManager } from "./menu"
@@ -30,6 +31,7 @@ const enum AbuseState {
 new (class ArmletAbuse {
 	private readonly menu = new MenuManager()
 	private readonly dot = new DotTracker()
+	private readonly attacks = new AttackTracker()
 
 	private readonly lock = new TickSleeper()
 	private readonly rampSleep = new TickSleeper()
@@ -125,11 +127,20 @@ new (class ArmletAbuse {
 		const cycle = this.CycleDuration()
 		const now = GameState.RawGameTime
 
-		if (this.dot.NextTickTime() - now <= cycle) {
+		if (this.NextDangerTime(hero) - now <= cycle) {
 			return false
 		}
 
 		return true
+	}
+
+	/** Soonest moment damage can land: next known DoT tick or an incoming attack projectile. */
+	private NextDangerTime(hero: Unit): number {
+		let next = this.dot.NextTickTime()
+		if (this.menu.AvoidAttacks.value) {
+			next = Math.min(next, this.attacks.NextImpactTime(hero))
+		}
+		return next
 	}
 
 	private CycleDuration(): number {
@@ -260,10 +271,12 @@ new (class ArmletAbuse {
 		const now = GameState.RawGameTime
 		const dotTick = this.dot.NextTickTime() - now
 		const dotText = Number.isFinite(dotTick) ? `${Math.round(dotTick * 1000)}ms` : "none"
+		const atkHit = this.attacks.NextImpactTime(hero) - now
+		const atkText = Number.isFinite(atkHit) ? `${Math.round(atkHit * 1000)}ms` : "none"
 		const rampLeft = this.rampSleep.Sleeping ? Math.round(this.rampSleep.RemainingSleepTime) : 0
 		this.debugText =
 			`${this.StateName} | hp ${hero.HP}/${Math.round(this.Threshold(bonusHP))}` +
-			` | dot ${dotText} | ramp ${rampLeft}ms`
+			` | dot ${dotText} | atk ${atkText} | ramp ${rampLeft}ms`
 	}
 
 	private get StateName(): string {

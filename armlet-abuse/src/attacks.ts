@@ -56,7 +56,11 @@ export class AttackTracker {
 				this.swings.delete(unit)
 				continue
 			}
-			next = Math.min(next, impact)
+			// A passed impact means the hit has already landed — right after it is
+			// exactly when the burst should fire, so it must never keep blocking.
+			if (impact >= now) {
+				next = Math.min(next, impact)
+			}
 		}
 		return next
 	}

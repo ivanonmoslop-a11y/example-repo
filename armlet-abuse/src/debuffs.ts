@@ -1,34 +1,12 @@
 import { EntityManager, Unit } from "github.com/octarine-public/wrapper/index"
 
-/**
- * Debuffs that change the abuse, matched by name against buffs. The SDK does not
- * expose shatter, heal block or tick interval as queryable properties, so — like any
- * name list — these were verified against the wrapper's modifier exports.
- */
-
-/**
- * Debuffs under which the abuse must never run: Ice Blast shatters (instantly kills)
- * the hero the moment HP drops low; Doom blocks healing, so the refill after the
- * burst never lands; Rupture deals damage on movement, which no tick schedule can
- * dodge — a single step during the 1 HP window is death.
- */
 const FORBIDDEN = ["modifier_ice_blast", "modifier_doom_bringer_doom", "modifier_bloodseeker_rupture"]
 
-/** Any effect present that makes the 1 HP burst window lethal no matter the timing. */
 export function HasForbiddenDebuff(hero: Unit): boolean {
 	return FORBIDDEN.some(name => hero.HasBuffByName(name))
 }
 
-/**
- * Ticking debuffs that can kill a hero sitting at 1 HP, with their tick interval in
- * seconds. The burst must finish strictly between two ticks. Where the real interval
- * is uncertain, the SHORTER guess is used: a phantom predicted tick only blocks the
- * burst a little longer, while a missed real tick is death at 1 HP. Intervals at or
- * below the burst cycle (~0.2-0.25s) effectively forbid the abuse while the debuff
- * lasts — under Rot or a Chakram there is no safe gap, and that is the point.
- */
 export const KNOWN_DOTS: readonly (readonly [string, number])[] = [
-	// items
 	["modifier_item_urn_damage", 1],
 	["modifier_item_spirit_vessel_damage", 1],
 	["modifier_item_radiance_debuff", 1],
@@ -37,7 +15,6 @@ export const KNOWN_DOTS: readonly (readonly [string, number])[] = [
 	["modifier_item_meteor_hammer_burn", 0.5],
 	["modifier_item_cloak_of_flames_debuff", 0.5],
 	["modifier_item_witch_blade_slow", 0.5],
-	// 1s and slower hero ticks
 	["modifier_viper_nethertoxin", 1],
 	["modifier_venomancer_poison_sting", 1],
 	["modifier_venomancer_poison_sting_ward", 1],
@@ -55,7 +32,6 @@ export const KNOWN_DOTS: readonly (readonly [string, number])[] = [
 	["modifier_alchemist_acid_spray", 1],
 	["modifier_abyssal_underlord_firestorm_burn", 1],
 	["modifier_sniper_shrapnel_slow", 1],
-	// fast or uncertain ticks — conservative short intervals
 	["modifier_ogre_magi_ignite", 0.5],
 	["modifier_jakiro_dual_breath_burn", 0.5],
 	["modifier_jakiro_liquid_fire_burn", 0.5],
@@ -81,7 +57,6 @@ export const KNOWN_DOTS: readonly (readonly [string, number])[] = [
 	["modifier_venomancer_snakebite", 0.5],
 	["modifier_venomancer_latent_poison", 0.5],
 	["modifier_venomancer_sepsis", 0.5],
-	// continuous — no safe gap while the debuff is on
 	["modifier_death_prophet_spirit_siphon", 0.25],
 	["modifier_disruptor_static_storm", 0.25],
 	["modifier_shredder_chakram_debuff", 0.25],
@@ -89,12 +64,6 @@ export const KNOWN_DOTS: readonly (readonly [string, number])[] = [
 	["modifier_phoenix_sun_ray_slow", 0.2]
 ]
 
-/**
- * Enemy-centered damage zones: while the hero is within the radius of an enemy
- * carrying the buff, damage can land at any moment (random or rapid pulses with no
- * debuff on the victim), so the abuse is blocked outright — there is no schedule to
- * slip between. Radii are the ability values plus a safety margin for the ramp.
- */
 const DANGER_ZONES: readonly (readonly [string, number])[] = [
 	["modifier_juggernaut_blade_fury", 350],
 	["modifier_razor_eye_of_the_storm", 600],
@@ -110,7 +79,6 @@ const DANGER_ZONES: readonly (readonly [string, number])[] = [
 
 const MAX_ZONE_RADIUS = Math.max(...DANGER_ZONES.map(([, radius]) => radius))
 
-/** True while any enemy damage zone covers the hero. */
 export function InDangerZone(hero: Unit): boolean {
 	const units = EntityManager.GetEntitiesByClass(Unit)
 	for (let i = units.length - 1; i > -1; i--) {

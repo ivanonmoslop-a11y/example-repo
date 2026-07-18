@@ -10,7 +10,6 @@ export class MenuManager {
 	public readonly HPThreshold: Menu.Slider
 	public readonly ShowDebug: Menu.Toggle
 
-	/** Order must match the ThresholdMode dropdown entries below. */
 	public static readonly MODE_PING = 0
 	public static readonly MODE_MANUAL = 1
 

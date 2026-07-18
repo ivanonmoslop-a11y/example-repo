@@ -134,7 +134,6 @@ new (class ArmletAbuse {
 		return true
 	}
 
-	/** Soonest moment damage can land: next known DoT tick, an incoming attack projectile or a melee swing. */
 	private NextDangerTime(hero: Unit): number {
 		return Math.min(this.dot.NextTickTime(), this.attacks.NextImpactTime(hero))
 	}

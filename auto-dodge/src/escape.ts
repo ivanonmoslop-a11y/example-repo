@@ -1,6 +1,7 @@
 import {
 	EntityManager,
 	EventsSDK,
+	FakeUnit,
 	Fountain,
 	GameState,
 	Hero,
@@ -8,6 +9,7 @@ import {
 	LocalPlayer,
 	NetworkedParticle,
 	Sleeper,
+	Unit,
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
@@ -37,6 +39,7 @@ export class BlinkEscape {
 	constructor() {
 		EventsSDK.on("ParticleCreated", particle => this.OnParticle(particle))
 		EventsSDK.on("ParticleUpdated", particle => this.OnParticle(particle))
+		EventsSDK.on("ParticleUnitPositionUpdated", (unit, particle) => this.OnUnitReveal(unit, particle))
 	}
 
 	public get Status(): string {
@@ -106,27 +109,50 @@ export class BlinkEscape {
 		this.blink = hero.Items.find((x): x is item_blink => x instanceof item_blink)
 	}
 
-	private OnParticle(particle: NetworkedParticle): void {
-		if (!this.enabled || this.consumed.has(particle.Index)) {
-			return
-		}
-		const path = particle.PathNoEcon
-		if (!path.includes("blink") || path.includes("_start")) {
+	private OnUnitReveal(unit: FakeUnit | Unit, particle: Nullable<NetworkedParticle>): void {
+		if (!this.enabled || particle === undefined || !this.IsBlinkArrival(particle)) {
 			return
 		}
 		const hero = this.Hero
 		if (hero === undefined || !hero.IsAlive) {
 			return
 		}
-		const cp = particle.ControlPoints.get(0)
-		if (cp === undefined || !cp.IsValid) {
+		if (unit instanceof Unit && (!unit.IsEnemy(hero) || unit.IsIllusion)) {
 			return
 		}
-		this.consumed.add(particle.Index)
-		if (this.consumed.size > 512) {
-			this.consumed.clear()
-			this.consumed.add(particle.Index)
+		const pos = unit.PredictedPosition
+		if (!pos.IsValid || pos.Distance2D(hero.Position) > TRIGGER_RADIUS) {
+			return
 		}
+		this.Trigger()
+	}
+
+	private IsBlinkArrival(particle: NetworkedParticle): boolean {
+		const path = particle.PathNoEcon
+		return path.includes("blink") && !path.includes("_start")
+	}
+
+	private OnParticle(particle: NetworkedParticle): void {
+		if (!this.enabled || this.consumed.has(particle.Index)) {
+			return
+		}
+		if (!this.IsBlinkArrival(particle)) {
+			return
+		}
+		const hero = this.Hero
+		if (hero === undefined || !hero.IsAlive) {
+			return
+		}
+		const attached = particle.AttachedTo ?? particle.ModifiersAttachedTo
+		if (attached !== undefined) {
+			this.HandleAttached(particle, attached, hero)
+			return
+		}
+		const cp = this.ParticlePosition(particle)
+		if (cp === undefined) {
+			return
+		}
+		this.Consume(particle.Index)
 		if (cp.Distance2D(hero.Position) > TRIGGER_RADIUS) {
 			return
 		}
@@ -138,6 +164,45 @@ export class BlinkEscape {
 			return
 		}
 		this.candidates.set(particle.Index, [cp.Clone(), GameState.RawGameTime + CLAIM_TIME])
+	}
+
+	private HandleAttached(particle: NetworkedParticle, attached: FakeUnit | Unit, hero: Hero): void {
+		if (attached instanceof Unit && (!attached.IsEnemy(hero) || attached.IsIllusion)) {
+			this.Consume(particle.Index)
+			return
+		}
+		const pos = attached.PredictedPosition.IsValid
+			? attached.PredictedPosition
+			: attached instanceof Unit
+			? attached.Position
+			: undefined
+		if (pos === undefined || !pos.IsValid) {
+			return
+		}
+		this.Consume(particle.Index)
+		if (pos.Distance2D(hero.Position) <= TRIGGER_RADIUS) {
+			this.Trigger()
+		}
+	}
+
+	private ParticlePosition(particle: NetworkedParticle): Nullable<Vector3> {
+		const cp = particle.ControlPoints.get(0)
+		if (cp !== undefined && cp.IsValid) {
+			return cp
+		}
+		const fallback = particle.ControlPointsFallback.get(0)
+		if (fallback !== undefined && fallback.IsValid) {
+			return fallback
+		}
+		return undefined
+	}
+
+	private Consume(index: number): void {
+		this.consumed.add(index)
+		if (this.consumed.size > 512) {
+			this.consumed.clear()
+			this.consumed.add(index)
+		}
 	}
 
 	private EvaluateCandidates(hero: Hero): void {

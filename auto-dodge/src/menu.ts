@@ -14,7 +14,7 @@ export class MenuManager {
 		this.PanelKey = this.tree.AddKeybind(
 			"Panel Key",
 			"None",
-			"Press to show or hide the dodge panel.\nClick icons on the panel to allow/forbid a counter,\nthe bottom button toggles animation cancel"
+			"Показать/скрыть панель доджа.\nКлик по иконке — вкл/выкл контры.\nКнопки: отмена анимации при додже\nи ответный блинк от врага (к фонтану\nили туда, где враги дальше всего)"
 		)
 		this.ShowDebug = this.tree.AddToggle("Show Debug", false)
 	}

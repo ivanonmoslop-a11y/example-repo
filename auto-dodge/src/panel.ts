@@ -30,12 +30,14 @@ interface PanelLayout {
 	panel: Rectangle
 	header: Rectangle
 	slots: [CounterSlot, Rectangle][]
-	button: Rectangle
+	cancelButton: Rectangle
+	blinkButton: Rectangle
 }
 
 export class DodgePanel {
 	public visible = true
 	public cancelAnimation = true
+	public blinkAway = true
 
 	private readonly pos = new Vector2().Invalidate()
 	private readonly dragOffset = new Vector2()
@@ -72,7 +74,8 @@ export class DodgePanel {
 		}
 		this.DrawBackground(layout)
 		this.DrawSlots(layout)
-		this.DrawButton(layout)
+		this.DrawButton(layout.cancelButton, "Отмена анимации", this.cancelAnimation)
+		this.DrawButton(layout.blinkButton, "Блинк от врага", this.blinkAway)
 	}
 
 	private DrawBackground(layout: PanelLayout): void {
@@ -93,16 +96,10 @@ export class DodgePanel {
 		}
 	}
 
-	private DrawButton(layout: PanelLayout): void {
-		const size = layout.button.pos2.Subtract(layout.button.pos1)
-		RendererSDK.FilledRect(layout.button.pos1, size, this.cancelAnimation ? BUTTON_ON : BUTTON_OFF)
-		RendererSDK.TextByFlags(
-			this.cancelAnimation ? "Cancel Anim: ON" : "Cancel Anim: OFF",
-			layout.button,
-			Color.White,
-			1.8,
-			TextFlags.Center
-		)
+	private DrawButton(rect: Rectangle, label: string, state: boolean): void {
+		const size = rect.pos2.Subtract(rect.pos1)
+		RendererSDK.FilledRect(rect.pos1, size, state ? BUTTON_ON : BUTTON_OFF)
+		RendererSDK.TextByFlags(`${label}: ${state ? "ВКЛ" : "ВЫКЛ"}`, rect, Color.White, 1.8, TextFlags.Center)
 	}
 
 	private GetLayout(): Nullable<PanelLayout> {
@@ -115,7 +112,7 @@ export class DodgePanel {
 		const headerH = GUIInfo.ScaleHeight(HEADER_H)
 		const buttonH = GUIInfo.ScaleHeight(BUTTON_H)
 		const width = pad + shown.length * (icon + pad)
-		const height = headerH + pad + icon + pad + buttonH + pad
+		const height = headerH + pad + icon + pad + 2 * (buttonH + pad)
 		const size = new Vector2(width, height)
 		this.EnsurePos(size)
 		const p = this.pos
@@ -129,8 +126,10 @@ export class DodgePanel {
 			slotX += icon + pad
 		}
 		const by = y + icon + pad
-		const button = new Rectangle(new Vector2(p.x + pad, by), new Vector2(p.x + width - pad, by + buttonH))
-		return { panel, header, slots, button }
+		const cancelButton = new Rectangle(new Vector2(p.x + pad, by), new Vector2(p.x + width - pad, by + buttonH))
+		const by2 = by + buttonH + pad
+		const blinkButton = new Rectangle(new Vector2(p.x + pad, by2), new Vector2(p.x + width - pad, by2 + buttonH))
+		return { panel, header, slots, cancelButton, blinkButton }
 	}
 
 	private EnsurePos(size: Vector2): void {
@@ -164,8 +163,12 @@ export class DodgePanel {
 				return false
 			}
 		}
-		if (layout.button.Contains(cursor)) {
+		if (layout.cancelButton.Contains(cursor)) {
 			this.cancelAnimation = !this.cancelAnimation
+			return false
+		}
+		if (layout.blinkButton.Contains(cursor)) {
+			this.blinkAway = !this.blinkAway
 			return false
 		}
 		return false

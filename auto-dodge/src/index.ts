@@ -18,6 +18,7 @@ import {
 } from "github.com/octarine-public/wrapper/index"
 
 import { CastMode, CounterSlot, CreateSlots } from "./counters"
+import { BlinkEscape } from "./escape"
 import { MenuManager } from "./menu"
 import { DodgePanel } from "./panel"
 
@@ -39,6 +40,7 @@ new (class AutoDodge {
 	private readonly menu = new MenuManager()
 	private readonly slots = CreateSlots()
 	private readonly panel = new DodgePanel(this.slots)
+	private readonly escape = new BlinkEscape()
 	private readonly sleeper = new Sleeper()
 	private readonly handled = new Set<number>()
 	private debugText = ""
@@ -77,6 +79,7 @@ new (class AutoDodge {
 		for (const counter of this.slots) {
 			counter.Resolve(hero)
 		}
+		this.escape.Tick(hero, this.panel.blinkAway)
 		if (!hero.IsAlive) {
 			return
 		}
@@ -227,7 +230,7 @@ new (class AutoDodge {
 		}
 		const slot = danger !== undefined ? this.PickCounter(hero, danger) : undefined
 		const counter = slot !== undefined ? slot.def.key : "none"
-		this.debugText = `${state} | ${dangerText} | ${counter} | ${cancel}`
+		this.debugText = `${state} | ${dangerText} | ${counter} | ${cancel} | ${this.escape.Status}`
 	}
 
 	private Draw(): void {
@@ -254,5 +257,6 @@ new (class AutoDodge {
 		this.handled.clear()
 		this.debugText = ""
 		this.panel.Reset()
+		this.escape.Reset()
 	}
 })()

@@ -8,7 +8,6 @@ export class MenuManager {
 	public readonly State: Menu.Toggle
 	public readonly ThresholdMode: Menu.Dropdown
 	public readonly HPThreshold: Menu.Slider
-	public readonly AvoidAttacks: Menu.Toggle
 	public readonly ShowDebug: Menu.Toggle
 
 	/** Order must match the ThresholdMode dropdown entries below. */
@@ -30,11 +29,6 @@ export class MenuManager {
 			550,
 			0,
 			"Burst as soon as HP is at or below this value.\nCapped at the armlet bonus — it cannot refill higher"
-		)
-		this.AvoidAttacks = this.tree.AddToggle(
-			"Avoid Flying Attacks",
-			true,
-			"Delay the burst while an attack projectile\n(creeps, summons, Roshan, heroes) is flying at you.\nOnly launched projectiles — no swing prediction"
 		)
 		this.ShowDebug = this.tree.AddToggle("Show Debug", false)
 

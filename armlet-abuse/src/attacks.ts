@@ -11,6 +11,12 @@ import {
 const SWING_GRACE = 0.5
 
 /**
+ * Reach buffer (Moones' attackRange+100 rule) for melee swings whose target the SDK
+ * could not resolve — while the hero moves, the angle-based resolution often fails.
+ */
+const MELEE_RANGE_BUFFER = 100
+
+/**
  * Tracks both ways an attack can land on the hero: attack/spell projectiles already
  * flying at them (ranged creeps, summons, towers, heroes) via ProjectileManager, and
  * melee swings aimed at them via the SDK attack monitor (AttackStarted resolves the
@@ -34,7 +40,7 @@ export class AttackTracker {
 
 	/** Absolute RawGameTime of the soonest incoming impact; Infinity when nothing threatens. */
 	public NextImpactTime(hero: Unit): number {
-		return Math.min(this.NextProjectileImpact(hero), this.NextSwingImpact(hero))
+		return Math.min(this.NextProjectileImpact(hero), this.NextSwingImpact())
 	}
 
 	private NextProjectileImpact(hero: Unit): number {
@@ -42,17 +48,17 @@ export class AttackTracker {
 		const now = GameState.RawGameTime
 		for (const proj of ProjectileManager.AllTrackingProjectiles) {
 			if (this.Threatens(proj, hero)) {
-				next = Math.min(next, now + this.TimeToImpact(proj))
+				next = Math.min(next, now + this.TimeToImpact(proj, hero))
 			}
 		}
 		return next
 	}
 
-	private NextSwingImpact(hero: Unit): number {
+	private NextSwingImpact(): number {
 		let next = Number.POSITIVE_INFINITY
 		const now = GameState.RawGameTime
 		for (const [unit, impact] of this.swings) {
-			if (!unit.IsValid || !unit.IsAttacking || unit.Target !== hero || now > impact + SWING_GRACE) {
+			if (!unit.IsValid || !unit.IsAttacking || now > impact + SWING_GRACE) {
 				this.swings.delete(unit)
 				continue
 			}
@@ -67,13 +73,19 @@ export class AttackTracker {
 
 	private AttackStarted(unit: Unit, castPoint: number): void {
 		const hero = LocalPlayer?.Hero
-		if (hero === undefined || unit.Target !== hero) {
+		if (hero === undefined || unit.IsRoshan || !unit.IsMelee) {
 			return
 		}
-		if (unit.IsRoshan || !unit.IsMelee) {
-			return
+		const target = unit.Target
+		// Resolved target is authoritative. Unresolved + able to reach us counts too:
+		// bursting into a swing the SDK merely failed to attribute is still death.
+		const threatens =
+			target !== undefined
+				? target === hero
+				: unit.IsEnemy(hero) && hero.Distance2D(unit) <= unit.GetAttackRange(hero) + MELEE_RANGE_BUFFER
+		if (threatens) {
+			this.swings.set(unit, GameState.RawGameTime + castPoint)
 		}
-		this.swings.set(unit, GameState.RawGameTime + castPoint)
 	}
 
 	private Threatens(proj: TrackingProjectile, hero: Unit): boolean {
@@ -92,11 +104,17 @@ export class AttackTracker {
 		return source instanceof Unit && source.IsEnemy(hero)
 	}
 
-	private TimeToImpact(proj: TrackingProjectile): number {
+	private TimeToImpact(proj: TrackingProjectile, hero: Unit): number {
 		// Position not resolved yet — treat as imminent until the manager fills it in.
 		if (!proj.Position.IsValid || !proj.TargetLoc.IsValid) {
 			return 0
 		}
-		return proj.Position.Distance(proj.TargetLoc) / Math.max(proj.Speed, 1)
+		// Running toward the shooter closes the gap faster than the projectile flies —
+		// assume the worst case so the estimate never lands later than the real hit.
+		let closing = Math.max(proj.Speed, 1)
+		if (hero.IsMoving) {
+			closing += hero.MoveSpeed
+		}
+		return proj.Position.Distance(proj.TargetLoc) / closing
 	}
 }

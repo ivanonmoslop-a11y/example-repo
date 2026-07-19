@@ -40,7 +40,7 @@ export function isLinkensBlocked(target: Unit): boolean {
 
 export function isInCastRange(hero: Unit, target: Unit, castRange: number): boolean {
 	const dist = hero.Distance2D(target) - hero.HullRadius - target.HullRadius
-	return dist <= castRange
+	return dist <= castRange - 50
 }
 
 export function canDagonKill(hero: Unit, dagon: Item, target: Unit): boolean {

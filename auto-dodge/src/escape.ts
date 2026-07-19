@@ -13,8 +13,12 @@ import {
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
-const TRIGGER_RADIUS = 800
-const JUMP_DIST = 550
+const TRIGGER_RADIUS = 1000
+const JUMP_DIST = 500
+const MAX_WALK_SPEED = 650
+const WALK_MARGIN = 120
+const APPROACH_MIN = 200
+const APPROACH_INFO_TTL = 3
 const ALLY_NEAR = 250
 const ENEMY_NEAR = 300
 const PENDING_TIME = 0.5
@@ -65,13 +69,15 @@ export class BlinkEscape {
 		this.enabled = enabled
 		this.ResolveBlink(hero)
 		this.TrackOwnBlink()
+		if (this.enabled && hero.IsAlive) {
+			this.EvaluateCandidates(hero)
+		}
 		this.WatchJumps(hero)
 		if (!this.enabled || !hero.IsAlive) {
 			this.pendingUntil = 0
 			this.candidates.clear()
 			return
 		}
-		this.EvaluateCandidates(hero)
 		if (this.pendingUntil <= GameState.RawGameTime) {
 			return
 		}
@@ -124,6 +130,9 @@ export class BlinkEscape {
 		if (!pos.IsValid || pos.Distance2D(hero.Position) > TRIGGER_RADIUS) {
 			return
 		}
+		if (unit instanceof Hero && !this.IsApproachingPos(unit.Index, pos, hero)) {
+			return
+		}
 		this.Trigger()
 	}
 
@@ -171,18 +180,18 @@ export class BlinkEscape {
 			this.Consume(particle.Index)
 			return
 		}
-		const pos = attached.PredictedPosition.IsValid
-			? attached.PredictedPosition
-			: attached instanceof Unit
-			? attached.Position
-			: undefined
-		if (pos === undefined || !pos.IsValid) {
+		const pos = attached.PredictedPosition
+		if (!pos.IsValid) {
 			return
 		}
 		this.Consume(particle.Index)
-		if (pos.Distance2D(hero.Position) <= TRIGGER_RADIUS) {
-			this.Trigger()
+		if (pos.Distance2D(hero.Position) > TRIGGER_RADIUS) {
+			return
 		}
+		if (attached instanceof Hero && !this.IsApproachingPos(attached.Index, pos, hero)) {
+			return
+		}
+		this.Trigger()
 	}
 
 	private ParticlePosition(particle: NetworkedParticle): Nullable<Vector3> {
@@ -252,8 +261,11 @@ export class BlinkEscape {
 			if (!enemy.IsValid || !enemy.IsEnemy(hero) || enemy.IsIllusion) {
 				continue
 			}
-			if (!enemy.IsVisible || !enemy.IsAlive) {
+			if (!enemy.IsAlive) {
 				this.lastSeen.delete(enemy.Index)
+				continue
+			}
+			if (!enemy.IsVisible) {
 				continue
 			}
 			const cur = enemy.Position.Clone()
@@ -263,19 +275,31 @@ export class BlinkEscape {
 				continue
 			}
 			const [prevPos, prevTime] = prev
-			if (now - prevTime > GameState.TickInterval * 2.5) {
+			const dt = now - prevTime
+			const dist = prevPos.Distance2D(cur)
+			if (dist <= Math.max(JUMP_DIST, dt * MAX_WALK_SPEED + WALK_MARGIN)) {
 				continue
 			}
-			if (prevPos.Distance2D(cur) < JUMP_DIST) {
+			const curDist = cur.Distance2D(hero.Position)
+			if (curDist > TRIGGER_RADIUS) {
 				continue
 			}
-			if (cur.Distance2D(hero.Position) > TRIGGER_RADIUS) {
+			if (prevPos.Distance2D(hero.Position) - curDist < APPROACH_MIN) {
 				continue
 			}
 			if (this.enabled && hero.IsAlive) {
 				this.Trigger()
 			}
 		}
+	}
+
+	private IsApproachingPos(index: number, landing: Vector3, hero: Hero): boolean {
+		const prev = this.lastSeen.get(index)
+		if (prev === undefined || GameState.RawGameTime - prev[1] > APPROACH_INFO_TTL) {
+			return true
+		}
+		const diff = prev[0].Distance2D(hero.Position) - landing.Distance2D(hero.Position)
+		return diff >= APPROACH_MIN
 	}
 
 	private HasAllyNear(heroes: Hero[], pos: Vector3, hero: Hero): boolean {
@@ -298,7 +322,8 @@ export class BlinkEscape {
 				x.IsAlive &&
 				x.IsVisible &&
 				!x.IsIllusion &&
-				x.Position.Distance2D(pos) <= ENEMY_NEAR
+				x.Position.Distance2D(pos) <= ENEMY_NEAR &&
+				this.IsApproachingPos(x.Index, x.Position, hero)
 		)
 	}
 

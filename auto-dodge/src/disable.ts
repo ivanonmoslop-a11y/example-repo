@@ -1,8 +1,21 @@
-import { Ability, GameState, Hero, ImageData, Sleeper } from "github.com/octarine-public/wrapper/index"
+import { Ability, EntityManager, GameState, Hero, ImageData, Sleeper } from "github.com/octarine-public/wrapper/index"
 
 const TARGET_SLEEP = 1.2
 const TRIGGER_AGE = 0.7
 const RANGE_BUFFER = 100
+
+const TRIGGER_SPELLS: ReadonlyMap<string, number> = new Map([
+	["antimage_blink", 1200],
+	["faceless_void_time_walk", 900],
+	["queenofpain_blink", 1200],
+	["spirit_breaker_nether_strike", 900],
+	["axe_berserkers_call", 320],
+	["legion_commander_duel", 250],
+	["faceless_void_chronosphere", 450],
+	["nevermore_requiem", 900],
+	["magnataur_reverse_polarity", 410],
+	["sandking_epicenter", 600]
+])
 
 const enum DisableMode {
 	Enemy,
@@ -158,7 +171,7 @@ export class AutoDisable {
 		return `dis:${this.status}`
 	}
 
-	public Tick(hero: Hero, enabled: boolean, targets: Hero[]): void {
+	public Tick(hero: Hero, enabled: boolean, blinkers: Hero[]): void {
 		for (const item of this.slots) {
 			item.Resolve(hero)
 		}
@@ -170,6 +183,7 @@ export class AutoDisable {
 			this.status = "cant"
 			return
 		}
+		const targets = this.CollectTargets(hero, blinkers)
 		if (targets.length === 0) {
 			this.status = "watch"
 			return
@@ -203,6 +217,39 @@ export class AutoDisable {
 		this.sleeper.FullReset()
 		this.castAt.clear()
 		this.status = "none"
+	}
+
+	private CollectTargets(hero: Hero, blinkers: Hero[]): Hero[] {
+		const targets = blinkers.slice()
+		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
+			if (!enemy.IsValid || !enemy.IsAlive || !enemy.IsVisible || enemy.IsIllusion || !enemy.IsEnemy(hero)) {
+				continue
+			}
+			if (targets.some(x => x.Index === enemy.Index)) {
+				continue
+			}
+			if (this.IsCastingAtUs(enemy, hero)) {
+				targets.push(enemy)
+			}
+		}
+		return targets.sort((a, b) => a.Distance2D(hero) - b.Distance2D(hero))
+	}
+
+	private IsCastingAtUs(enemy: Hero, hero: Hero): boolean {
+		const reach = enemy.Distance2D(hero) - hero.HullRadius
+		for (const spell of enemy.Spells) {
+			if (spell === undefined || !spell.IsValid) {
+				continue
+			}
+			if (!spell.IsInAbilityPhase && !spell.IsChanneling) {
+				continue
+			}
+			const radius = TRIGGER_SPELLS.get(spell.Name)
+			if (radius !== undefined && reach <= radius) {
+				return true
+			}
+		}
+		return false
 	}
 
 	private Cast(hero: Hero, slot: DisableSlot, target: Hero): void {

@@ -32,7 +32,7 @@ export class MenuManager {
 		this.MinimapPaint = paintNode.AddToggle(
 			"State",
 			false,
-			"Заливка миникарты пингами — видят все союзники"
+			"Рисование на миникарте через CTRL+курсор"
 		)
 		this.MinimapPaintStep = paintNode.AddSlider(
 			"Шаг сетки (×100 юнитов)",
@@ -43,17 +43,17 @@ export class MenuManager {
 			"Расстояние между точками. Меньше = плотнее покрытие"
 		)
 		this.MinimapPaintSpeed = paintNode.AddSlider(
-			"Задержка между точками (мс)",
-			80,
-			30,
+			"Задержка (мс)",
+			50,
+			0,
 			500,
 			0,
-			"Меньше = быстрее рисует, но может кикнуть. 80-150 — безопасно"
+			"0 = без задержки (каждый тик). Больше = медленнее рисует"
 		)
 		this.MinimapPaintKey = paintNode.AddKeybind(
 			"Кнопка вкл/выкл",
 			"None",
-			"Мгновенный старт/стоп заливки карты"
+			"Мгновенный старт/стоп рисования"
 		)
 
 		this.RightClickSpam = this.tree.AddToggle(

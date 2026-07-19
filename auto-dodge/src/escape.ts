@@ -87,7 +87,11 @@ interface BlinkMark {
 
 export class BlinkEscape {
 	private enabled = true
+	private detect = true
 	private pendingUntil = 0
+	private lastTriggerTime = 0
+	private lastTriggerIndex = -1
+	private readonly lastTriggerPos = new Vector3().Invalidate()
 	private selfBlinkUntil = 0
 	private prevOwnCooldown = 0
 	private reason = "none"
@@ -111,6 +115,30 @@ export class BlinkEscape {
 		return this.events.map(x => `${(now - x.time).toFixed(1)} ${x.text}`)
 	}
 
+	public BlinkTarget(hero: Hero, maxAge: number): Nullable<Hero> {
+		if (this.lastTriggerTime <= 0 || GameState.RawGameTime - this.lastTriggerTime > maxAge) {
+			return undefined
+		}
+		const enemies = EntityManager.GetEntitiesByClass(Hero).filter(
+			x => x.IsValid && x.IsAlive && x.IsVisible && !x.IsIllusion && x.IsEnemy(hero)
+		)
+		const known = enemies.find(x => x.Index === this.lastTriggerIndex)
+		if (known !== undefined) {
+			return known
+		}
+		const from = this.lastTriggerPos.IsValid ? this.lastTriggerPos : hero.Position
+		let best: Nullable<Hero>
+		let bestDist = TRIGGER_RADIUS
+		for (const enemy of enemies) {
+			const dist = enemy.Position.Distance2D(from)
+			if (dist < bestDist) {
+				bestDist = dist
+				best = enemy
+			}
+		}
+		return best
+	}
+
 	public get Status(): string {
 		if (!this.enabled) {
 			return "esc:off"
@@ -127,8 +155,9 @@ export class BlinkEscape {
 		return "esc:watch"
 	}
 
-	public Tick(hero: Hero, enabled: boolean): void {
+	public Tick(hero: Hero, enabled: boolean, detect: boolean = enabled): void {
 		this.enabled = enabled
+		this.detect = enabled || detect
 		this.ResolveBlink(hero)
 		this.TrackOwnBlink()
 		this.WatchEnemies(hero)
@@ -180,7 +209,7 @@ export class BlinkEscape {
 	private WatchEnemies(hero: Hero): void {
 		const now = GameState.RawGameTime
 		const heroPos = hero.Position
-		const active = this.enabled && hero.IsAlive
+		const active = this.detect && hero.IsAlive
 		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
 			if (!enemy.IsValid || !enemy.IsEnemy(hero) || enemy.IsIllusion) {
 				continue
@@ -208,7 +237,7 @@ export class BlinkEscape {
 			const reason = inRange ? this.ThreatReason(enemy, track, cur, heroPos, now) : undefined
 			this.Track(enemy.Index, track, cur, now)
 			if (reason !== undefined) {
-				this.Trigger(reason)
+				this.Trigger(reason, cur, enemy)
 			}
 		}
 	}
@@ -271,7 +300,7 @@ export class BlinkEscape {
 			}
 			this.reveals.delete(index)
 			if (this.IsApproachingReveal(cand, hero.Position)) {
-				this.Trigger(reason)
+				this.Trigger(reason, cand.revealPos, cand.enemy)
 			}
 		}
 	}
@@ -360,7 +389,7 @@ export class BlinkEscape {
 	// inside our vision is an arrival effect: fogged units' ambient particles are not
 	// networked at all.
 	private OnUnitReveal(unit: FakeUnit | Unit, particle: Nullable<NetworkedParticle>): void {
-		if (!this.enabled || (particle !== undefined && !this.IsBlinkArrival(particle))) {
+		if (!this.detect || (particle !== undefined && !this.IsBlinkArrival(particle))) {
 			return
 		}
 		const hero = this.Hero
@@ -388,11 +417,11 @@ export class BlinkEscape {
 		if (unit instanceof Unit && !this.IsApproachingPos(unit.Index, pos, hero.Position)) {
 			return
 		}
-		this.Trigger(particle === undefined ? "upos" : "particle")
+		this.Trigger(particle === undefined ? "upos" : "particle", pos, unit instanceof Hero ? unit : undefined)
 	}
 
 	private OnSound(name: string, source: Nullable<FakeUnit | Unit>, position: Vector3): void {
-		if (!this.enabled || !name.toLowerCase().includes("blink")) {
+		if (!this.detect || !name.toLowerCase().includes("blink")) {
 			return
 		}
 		const hero = this.Hero
@@ -415,7 +444,7 @@ export class BlinkEscape {
 			return
 		}
 		if (name.toLowerCase().includes("blink_in")) {
-			this.Trigger("snd")
+			this.Trigger("snd", position, source instanceof Hero ? source : undefined)
 		}
 	}
 
@@ -432,7 +461,7 @@ export class BlinkEscape {
 	}
 
 	private OnParticle(particle: NetworkedParticle): void {
-		if (!this.enabled || this.consumed.has(particle.Index) || !this.IsBlinkArrival(particle)) {
+		if (!this.detect || this.consumed.has(particle.Index) || !this.IsBlinkArrival(particle)) {
 			return
 		}
 		const hero = this.Hero
@@ -461,7 +490,7 @@ export class BlinkEscape {
 			if (!this.IsApproachingPos(source.Index, cp, hero.Position)) {
 				return
 			}
-			this.Trigger("particle")
+			this.Trigger("particle", cp, source instanceof Hero ? source : undefined)
 			return
 		}
 		if (this.IsOwnBlink(cp, hero)) {
@@ -471,7 +500,7 @@ export class BlinkEscape {
 		if (this.HasAllyNear(cp, hero)) {
 			return
 		}
-		this.Trigger("particle")
+		this.Trigger("particle", cp)
 	}
 
 	private HandleAttached(particle: NetworkedParticle, attached: FakeUnit | Unit, hero: Hero): void {
@@ -491,7 +520,7 @@ export class BlinkEscape {
 		if (attached instanceof Unit && !this.IsApproachingPos(attached.Index, pos, hero.Position)) {
 			return
 		}
-		this.Trigger("particle")
+		this.Trigger("particle", pos, attached instanceof Hero ? attached : undefined)
 	}
 
 	private IsBlinkArrival(particle: NetworkedParticle): boolean {
@@ -556,13 +585,20 @@ export class BlinkEscape {
 		)
 	}
 
-	private Trigger(reason: string): void {
+	private Trigger(reason: string, pos?: Vector3, enemy?: Hero): void {
 		if (this.sleeper.Sleeping("escape")) {
 			return
 		}
 		this.sleeper.Sleep(RETRIGGER_MS, "escape")
 		this.reason = reason
 		this.pendingUntil = GameState.RawGameTime + PENDING_TIME
+		this.lastTriggerTime = GameState.RawGameTime
+		this.lastTriggerIndex = enemy?.Index ?? -1
+		if (pos !== undefined) {
+			pos.CopyTo(this.lastTriggerPos)
+		} else {
+			this.lastTriggerPos.Invalidate()
+		}
 	}
 
 	private PickDestination(hero: Hero, range: number): Vector3 {

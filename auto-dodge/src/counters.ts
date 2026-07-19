@@ -16,28 +16,20 @@ export interface CounterDef {
 
 const ITEM_DEFS: CounterDef[] = [
 	{
-		key: "eul",
-		isItem: true,
-		names: ["item_cyclone", "item_wind_waker"],
-		mode: CastMode.Self,
-		vsProjectile: true,
-		vsCast: true
-	},
-	{
-		key: "bkb",
-		isItem: true,
-		names: ["item_black_king_bar"],
-		mode: CastMode.NoTarget,
-		vsProjectile: true,
-		vsCast: true
-	},
-	{
 		key: "manta",
 		isItem: true,
 		names: ["item_manta"],
 		mode: CastMode.NoTarget,
 		vsProjectile: true,
 		vsCast: false
+	},
+	{
+		key: "eul",
+		isItem: true,
+		names: ["item_cyclone", "item_wind_waker"],
+		mode: CastMode.Self,
+		vsProjectile: true,
+		vsCast: true
 	},
 	{
 		key: "lotus",
@@ -52,6 +44,14 @@ const ITEM_DEFS: CounterDef[] = [
 		isItem: true,
 		names: ["item_glimmer_cape"],
 		mode: CastMode.Self,
+		vsProjectile: true,
+		vsCast: true
+	},
+	{
+		key: "bkb",
+		isItem: true,
+		names: ["item_black_king_bar"],
+		mode: CastMode.NoTarget,
 		vsProjectile: true,
 		vsCast: true
 	}

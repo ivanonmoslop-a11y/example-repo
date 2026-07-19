@@ -11,6 +11,7 @@ import {
 } from "github.com/octarine-public/wrapper/index"
 
 import { CounterSlot } from "./counters"
+import { DisableSlot } from "./disable"
 import { GetSlotTexture, MoveDodgeSlot } from "./moveDodge"
 
 const HEADER_H = 24
@@ -41,6 +42,9 @@ interface PanelLayout {
 	moveToggleButton: Rectangle
 	blockButton: Rectangle
 	moveSlots: [MoveDodgeSlot, Rectangle][]
+	disableHeader: Rectangle
+	disableButton: Rectangle
+	disableSlots: [DisableSlot, Rectangle][]
 }
 
 export class DodgePanel {
@@ -49,12 +53,17 @@ export class DodgePanel {
 	public blinkAway = true
 	public moveDodgeEnabled = true
 	public blockControl = false
+	public autoDisable = false
 
 	private readonly pos = new Vector2().Invalidate()
 	private readonly dragOffset = new Vector2()
 	private dragging = false
 
-	constructor(private readonly slots: CounterSlot[], private readonly moveSlots: MoveDodgeSlot[]) {
+	constructor(
+		private readonly slots: CounterSlot[],
+		private readonly moveSlots: MoveDodgeSlot[],
+		private readonly disableSlots: DisableSlot[]
+	) {
 		InputEventSDK.on("MouseKeyDown", key => this.MouseKeyDown(key))
 		InputEventSDK.on("MouseKeyUp", key => this.MouseKeyUp(key))
 	}
@@ -91,6 +100,18 @@ export class DodgePanel {
 		this.DrawButton(layout.moveToggleButton, "Доджить движением", this.moveDodgeEnabled)
 		this.DrawButton(layout.blockButton, "Блокировать управление", this.blockControl)
 		this.DrawMoveSlots(layout)
+		this.DrawSectionHeader(layout.disableHeader, "АВТОДИЗЕЙБЛ")
+		this.DrawButton(layout.disableButton, "Автодизейбл", this.autoDisable)
+		this.DrawDisableSlots(layout)
+	}
+
+	private DrawDisableSlots(layout: PanelLayout): void {
+		for (const [slot, rect] of layout.disableSlots) {
+			const size = rect.pos2.Subtract(rect.pos1)
+			const tint = slot.IsFound ? Color.White : MISSING_TINT
+			RendererSDK.Image(slot.Texture, rect.pos1, -1, size, tint, 0, undefined, !slot.enabled)
+			RendererSDK.OutlinedRect(rect.pos1, size, 2, slot.enabled ? ON_BORDER : OFF_BORDER)
+		}
 	}
 
 	private DrawBackground(layout: PanelLayout): void {
@@ -147,7 +168,8 @@ export class DodgePanel {
 
 		const counterW = pad + shown.length * (icon + pad)
 		const minMoveW = pad + MOVE_COLS_MIN * (moveIcon + pad)
-		const width = Math.max(counterW, minMoveW)
+		const disableW = pad + this.disableSlots.length * (icon + pad)
+		const width = Math.max(counterW, minMoveW, disableW)
 		const moveCols = Math.max(1, Math.floor((width - pad) / (moveIcon + pad)))
 		const moveRows = Math.ceil(this.moveSlots.length / moveCols)
 
@@ -160,7 +182,13 @@ export class DodgePanel {
 			sectionH +
 			pad +
 			2 * (buttonH + pad) +
-			moveRows * (moveIcon + pad)
+			moveRows * (moveIcon + pad) +
+			sectionH +
+			pad +
+			buttonH +
+			pad +
+			icon +
+			pad
 
 		const size = new Vector2(width, height)
 		this.EnsurePos(size)
@@ -202,6 +230,23 @@ export class DodgePanel {
 			])
 		}
 
+		y += moveRows * (moveIcon + pad)
+
+		const disableHeader = new Rectangle(new Vector2(p.x, y), new Vector2(p.x + width, y + sectionH))
+		y += sectionH + pad
+		const disableButton = new Rectangle(new Vector2(p.x + pad, y), new Vector2(p.x + width - pad, y + buttonH))
+		y += buttonH + pad
+
+		const disableSlotRects: [DisableSlot, Rectangle][] = []
+		let disableX = p.x + pad
+		for (const slot of this.disableSlots) {
+			disableSlotRects.push([
+				slot,
+				new Rectangle(new Vector2(disableX, y), new Vector2(disableX + icon, y + icon))
+			])
+			disableX += icon + pad
+		}
+
 		return {
 			panel,
 			header,
@@ -211,7 +256,10 @@ export class DodgePanel {
 			moveHeader,
 			moveToggleButton,
 			blockButton,
-			moveSlots: moveSlotRects
+			moveSlots: moveSlotRects,
+			disableHeader,
+			disableButton,
+			disableSlots: disableSlotRects
 		}
 	}
 
@@ -264,6 +312,16 @@ export class DodgePanel {
 			return false
 		}
 		for (const [slot, rect] of layout.moveSlots) {
+			if (rect.Contains(cursor)) {
+				slot.enabled = !slot.enabled
+				return false
+			}
+		}
+		if (layout.disableButton.Contains(cursor)) {
+			this.autoDisable = !this.autoDisable
+			return false
+		}
+		for (const [slot, rect] of layout.disableSlots) {
 			if (rect.Contains(cursor)) {
 				slot.enabled = !slot.enabled
 				return false

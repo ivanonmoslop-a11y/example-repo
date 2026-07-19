@@ -22,6 +22,7 @@ const MOVE_SLEEP_MS = 120
 const SEARCH_ANGLES = 24
 const SEARCH_STEP = 40
 const SEARCH_MAX = 1800
+const SIDE_WEIGHT = 350
 const HOPELESS_FACTOR = 1.6
 const HOPELESS_SLACK = 0.25
 const PARTICLE_TTL = 3
@@ -415,6 +416,34 @@ const SPELLS: SpellDef[] = [
 		castGeo: CastGeo.Raze
 	},
 	{
+		name: "puck_illusory_orb",
+		shape: Shape.Line,
+		radius: 150,
+		range: 1950,
+		speed: 750,
+		castGeo: CastGeo.Line,
+		particles: ["puck_illusory_orb"]
+	},
+	{
+		name: "queenofpain_sonic_wave",
+		shape: Shape.Line,
+		radius: 250,
+		endRadius: 500,
+		range: 1100,
+		speed: 1300,
+		castGeo: CastGeo.Line,
+		particles: ["queen_sonic_wave"]
+	},
+	{
+		name: "rattletrap_hookshot",
+		shape: Shape.Line,
+		radius: 125,
+		range: 3000,
+		speed: 2400,
+		castGeo: CastGeo.Line,
+		particles: ["rattletrap_hookshot"]
+	},
+	{
 		name: "tidehunter_ravage",
 		shape: Shape.Circle,
 		radius: 1250,
@@ -512,7 +541,7 @@ export class MoveDodge {
 			return
 		}
 
-		const target = this.FindSafeSpot(hero, threats, heroPos, hull)
+		const target = this.FindSafeSpot(hero, threats, hit, heroPos, hull)
 		if (target === undefined) {
 			return
 		}
@@ -892,21 +921,30 @@ export class MoveDodge {
 		return threat.fixedDelay + Math.max(along - threat.radius, 0) / threat.speed
 	}
 
-	private FindSafeSpot(hero: Hero, threats: Threat[], heroPos: Vector3, hull: number): Nullable<Vector3> {
+	private FindSafeSpot(
+		hero: Hero,
+		threats: Threat[],
+		hit: Threat[],
+		heroPos: Vector3,
+		hull: number
+	): Nullable<Vector3> {
 		const speed = Math.max(hero.IsMoving ? hero.MoveSpeed : hero.MoveSpeed * 0.9, 100)
-		const budget =
-			Math.min(...threats.map(x => this.TimeToHit(x, heroPos)).filter(x => x >= 0)) - GameState.InputLag
+		const budget = Math.min(...hit.map(x => this.TimeToHit(x, heroPos))) - GameState.InputLag
+		const axes = hit.map(x => x.forward).filter((x): x is Vector3 => x !== undefined)
 		let best: Nullable<Vector3>
-		let bestDist = Number.MAX_VALUE
+		let bestCost = Number.MAX_VALUE
 		let fallback: Nullable<Vector3>
-		let fallbackDist = Number.MAX_VALUE
+		let fallbackCost = Number.MAX_VALUE
 
 		for (let i = 0; i < SEARCH_ANGLES; i++) {
 			const angle = (i / SEARCH_ANGLES) * Math.PI * 2
 			const cos = Math.cos(angle)
 			const sin = Math.sin(angle)
+			const align = axes.reduce((acc, fwd) => Math.max(acc, Math.abs(cos * fwd.x + sin * fwd.y)), 0)
+			const penalty = align * SIDE_WEIGHT
 			for (let dist = SEARCH_STEP; dist <= SEARCH_MAX; dist += SEARCH_STEP) {
-				if (dist >= fallbackDist) {
+				const cost = dist + penalty
+				if (cost >= fallbackCost) {
 					break
 				}
 				const point = new Vector3(heroPos.x + cos * dist, heroPos.y + sin * dist, heroPos.z)
@@ -917,13 +955,13 @@ export class MoveDodge {
 					continue
 				}
 				const need = dist / speed + hero.GetTurnTime(point)
-				if (dist < fallbackDist && need <= budget * HOPELESS_FACTOR + HOPELESS_SLACK) {
+				if (cost < fallbackCost && need <= budget * HOPELESS_FACTOR + HOPELESS_SLACK) {
 					fallback = point
-					fallbackDist = dist
+					fallbackCost = cost
 				}
-				if (need <= budget && dist < bestDist) {
+				if (need <= budget && cost < bestCost) {
 					best = point
-					bestDist = dist
+					bestCost = cost
 				}
 				break
 			}

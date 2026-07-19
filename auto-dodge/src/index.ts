@@ -18,6 +18,7 @@ import {
 } from "github.com/octarine-public/wrapper/index"
 
 import { CastMode, CounterSlot, CreateSlots } from "./counters"
+import { AutoDisable, CreateDisableSlots, DISABLE_TRIGGER_AGE } from "./disable"
 import { BlinkEscape } from "./escape"
 import { MenuManager } from "./menu"
 import { CreateMoveDodgeSlots, MoveDodge } from "./moveDodge"
@@ -41,9 +42,11 @@ new (class AutoDodge {
 	private readonly menu = new MenuManager()
 	private readonly slots = CreateSlots()
 	private readonly moveSlots = CreateMoveDodgeSlots()
-	private readonly panel = new DodgePanel(this.slots, this.moveSlots)
+	private readonly disableSlots = CreateDisableSlots()
+	private readonly panel = new DodgePanel(this.slots, this.moveSlots, this.disableSlots)
 	private readonly escape = new BlinkEscape()
 	private readonly moveDodge = new MoveDodge(this.moveSlots)
+	private readonly autoDisable = new AutoDisable(this.disableSlots)
 	private readonly sleeper = new Sleeper()
 	private readonly handled = new Set<number>()
 	private debugText = ""
@@ -82,7 +85,8 @@ new (class AutoDodge {
 		for (const counter of this.slots) {
 			counter.Resolve(hero)
 		}
-		this.escape.Tick(hero, this.panel.blinkAway)
+		this.escape.Tick(hero, this.panel.blinkAway, this.panel.autoDisable)
+		this.autoDisable.Tick(hero, this.panel.autoDisable, this.escape.BlinkTarget(hero, DISABLE_TRIGGER_AGE))
 		this.moveDodge.moveDodgeEnabled = this.panel.moveDodgeEnabled
 		this.moveDodge.blockControl = this.panel.blockControl
 		this.moveDodge.Tick(hero)
@@ -236,7 +240,7 @@ new (class AutoDodge {
 		}
 		const slot = danger !== undefined ? this.PickCounter(hero, danger) : undefined
 		const counter = slot !== undefined ? slot.def.key : "none"
-		this.debugText = `${state} | ${dangerText} | ${counter} | ${cancel} | ${this.escape.Status} | ${this.moveDodge.Status}`
+		this.debugText = `${state} | ${dangerText} | ${counter} | ${cancel} | ${this.escape.Status} | ${this.moveDodge.Status} | ${this.autoDisable.Status}`
 	}
 
 	private Draw(): void {
@@ -265,5 +269,6 @@ new (class AutoDodge {
 		this.panel.Reset()
 		this.escape.Reset()
 		this.moveDodge.Reset()
+		this.autoDisable.Reset()
 	}
 })()

@@ -20,6 +20,7 @@ import {
 import { CastMode, CounterSlot, CreateSlots } from "./counters"
 import { BlinkEscape } from "./escape"
 import { MenuManager } from "./menu"
+import { CreateMoveDodgeSlots, MoveDodge } from "./moveDodge"
 import { DodgePanel } from "./panel"
 
 const PROJ_MARGIN = 0.2
@@ -39,8 +40,10 @@ interface Danger {
 new (class AutoDodge {
 	private readonly menu = new MenuManager()
 	private readonly slots = CreateSlots()
-	private readonly panel = new DodgePanel(this.slots)
+	private readonly moveSlots = CreateMoveDodgeSlots()
+	private readonly panel = new DodgePanel(this.slots, this.moveSlots)
 	private readonly escape = new BlinkEscape()
+	private readonly moveDodge = new MoveDodge(this.moveSlots)
 	private readonly sleeper = new Sleeper()
 	private readonly handled = new Set<number>()
 	private debugText = ""
@@ -80,6 +83,9 @@ new (class AutoDodge {
 			counter.Resolve(hero)
 		}
 		this.escape.Tick(hero, this.panel.blinkAway)
+		this.moveDodge.moveDodgeEnabled = this.panel.moveDodgeEnabled
+		this.moveDodge.blockControl = this.panel.blockControl
+		this.moveDodge.Tick(hero)
 		if (!hero.IsAlive) {
 			return
 		}
@@ -230,7 +236,7 @@ new (class AutoDodge {
 		}
 		const slot = danger !== undefined ? this.PickCounter(hero, danger) : undefined
 		const counter = slot !== undefined ? slot.def.key : "none"
-		this.debugText = `${state} | ${dangerText} | ${counter} | ${cancel} | ${this.escape.Status}`
+		this.debugText = `${state} | ${dangerText} | ${counter} | ${cancel} | ${this.escape.Status} | ${this.moveDodge.Status}`
 	}
 
 	private Draw(): void {
@@ -258,5 +264,6 @@ new (class AutoDodge {
 		this.debugText = ""
 		this.panel.Reset()
 		this.escape.Reset()
+		this.moveDodge.Reset()
 	}
 })()

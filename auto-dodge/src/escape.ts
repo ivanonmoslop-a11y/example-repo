@@ -96,12 +96,19 @@ export class BlinkEscape {
 	private readonly tracks = new Map<number, EnemyTrack>()
 	private readonly reveals = new Map<number, RevealCandidate>()
 	private readonly marks: BlinkMark[] = []
+	private readonly events: { text: string; time: number }[] = []
 	private readonly consumed = new Set<number>()
 
 	constructor() {
 		EventsSDK.on("ParticleCreated", particle => this.OnParticle(particle))
 		EventsSDK.on("ParticleUpdated", particle => this.OnParticle(particle))
 		EventsSDK.on("ParticleUnitPositionUpdated", (unit, particle) => this.OnUnitReveal(unit, particle))
+		EventsSDK.on("StartSound", (name, source, position) => this.OnSound(name, source, position))
+	}
+
+	public get DebugLines(): string[] {
+		const now = GameState.RawGameTime
+		return this.events.map(x => `${(now - x.time).toFixed(1)} ${x.text}`)
 	}
 
 	public get Status(): string {
@@ -151,6 +158,7 @@ export class BlinkEscape {
 		this.tracks.clear()
 		this.reveals.clear()
 		this.marks.length = 0
+		this.events.length = 0
 		this.consumed.clear()
 	}
 
@@ -346,8 +354,13 @@ export class BlinkEscape {
 		return abil.Cooldown >= abil.MaxCooldown - RECENT_CAST_SLACK
 	}
 
+	// particle === undefined means the particle's path hash is unknown to the wrapper
+	// (econ blink skins missing from its table create no NetworkedParticle instance),
+	// so the path filter is impossible — but ANY particle positioning a fogged enemy
+	// inside our vision is an arrival effect: fogged units' ambient particles are not
+	// networked at all.
 	private OnUnitReveal(unit: FakeUnit | Unit, particle: Nullable<NetworkedParticle>): void {
-		if (!this.enabled || particle === undefined || !this.IsBlinkArrival(particle)) {
+		if (!this.enabled || (particle !== undefined && !this.IsBlinkArrival(particle))) {
 			return
 		}
 		const hero = this.Hero
@@ -358,14 +371,64 @@ export class BlinkEscape {
 			return
 		}
 		const pos = unit.PredictedPosition
-		if (!pos.IsValid || pos.Distance2D(hero.Position) > TRIGGER_RADIUS) {
+		if (!pos.IsValid) {
+			return
+		}
+		const dist = pos.Distance2D(hero.Position)
+		if (particle === undefined) {
+			this.Log(`upos ${this.ShortName(unit)} d${Math.round(dist)}`)
+			if (unit instanceof Unit && unit.IsVisible) {
+				return
+			}
+		}
+		if (dist > TRIGGER_RADIUS) {
 			return
 		}
 		this.RecordBlink(pos)
 		if (unit instanceof Unit && !this.IsApproachingPos(unit.Index, pos, hero.Position)) {
 			return
 		}
-		this.Trigger("particle")
+		this.Trigger(particle === undefined ? "upos" : "particle")
+	}
+
+	private OnSound(name: string, source: Nullable<FakeUnit | Unit>, position: Vector3): void {
+		if (!this.enabled || !name.toLowerCase().includes("blink")) {
+			return
+		}
+		const hero = this.Hero
+		if (hero === undefined || !hero.IsAlive) {
+			return
+		}
+		if (source instanceof Unit && (!source.IsEnemy(hero) || source.IsIllusion)) {
+			return
+		}
+		if (!position.IsValid || position.IsZero()) {
+			return
+		}
+		const dist = position.Distance2D(hero.Position)
+		this.Log(`snd ${name} d${Math.round(dist)}`)
+		if (dist > TRIGGER_RADIUS) {
+			return
+		}
+		this.RecordBlink(position)
+		if (source instanceof Unit && !this.IsApproachingPos(source.Index, position, hero.Position)) {
+			return
+		}
+		if (name.toLowerCase().includes("blink_in")) {
+			this.Trigger("snd")
+		}
+	}
+
+	private ShortName(unit: FakeUnit | Unit): string {
+		const name = unit instanceof Unit ? unit.Name : unit.Name || "fake"
+		return name.replace("npc_dota_hero_", "")
+	}
+
+	private Log(text: string): void {
+		this.events.push({ text, time: GameState.RawGameTime })
+		if (this.events.length > 6) {
+			this.events.shift()
+		}
 	}
 
 	private OnParticle(particle: NetworkedParticle): void {

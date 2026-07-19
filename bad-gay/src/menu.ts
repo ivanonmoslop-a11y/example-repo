@@ -1,4 +1,4 @@
-import { ImageData, Menu } from "github.com/octarine-public/wrapper/index"
+import { Color, ImageData, Menu } from "github.com/octarine-public/wrapper/index"
 
 export class MenuManager {
 	private readonly base = Menu.AddEntry("Utility")
@@ -12,8 +12,14 @@ export class MenuManager {
 	public readonly MinimapPaintStep: Menu.Slider
 	public readonly MinimapPaintSpeed: Menu.Slider
 	public readonly MinimapPaintKey: Menu.KeyBind
+	public readonly MinimapPaintAuto: Menu.Toggle
+	public readonly MinimapPaintColor: Menu.ColorPicker
+	public readonly MinimapPaintWidth: Menu.Slider
+	public readonly MinimapPaintClear: Menu.KeyBind
 	public readonly RightClickSpam: Menu.Toggle
 	public readonly BodyBlock: Menu.Toggle
+	public readonly BodyBlockRange: Menu.Slider
+	public readonly BodyBlockWeave: Menu.Toggle
 
 	constructor() {
 		this.State = this.tree.AddToggle("State", true, "Главный переключатель скрипта")
@@ -51,9 +57,24 @@ export class MenuManager {
 			"0 = без задержки (каждый тик). Больше = медленнее рисует"
 		)
 		this.MinimapPaintKey = paintNode.AddKeybind(
-			"Кнопка вкл/выкл",
+			"Кнопка рисования",
 			"None",
-			"Мгновенный старт/стоп рисования"
+			"Держать и водить курсором по миникарте"
+		)
+		this.MinimapPaintAuto = paintNode.AddToggle(
+			"Авто-закраска",
+			false,
+			"Само штрихует всю карту змейкой вместо ручного рисования"
+		)
+		this.MinimapPaintColor = paintNode.AddColorPicker(
+			"Цвет",
+			new Color(255, 60, 60)
+		)
+		this.MinimapPaintWidth = paintNode.AddSlider("Толщина линии", 2, 1, 10)
+		this.MinimapPaintClear = paintNode.AddKeybind(
+			"Очистить",
+			"None",
+			"Стереть всё нарисованное"
 		)
 
 		this.RightClickSpam = this.tree.AddToggle(
@@ -61,10 +82,24 @@ export class MenuManager {
 			false,
 			"Автоповтор ПКМ — быстрое перекликивание любого игрока"
 		)
-		this.BodyBlock = this.tree.AddToggle(
-			"Body Block",
+		const blockNode = this.tree.AddNode("Body Block")
+		this.BodyBlock = blockNode.AddToggle(
+			"State",
 			false,
-			"Блокировка героев — идти в хитбокс ближайшего союзника"
+			"Перехват врагов — встать на пути движения, а не бежать следом"
+		)
+		this.BodyBlockRange = blockNode.AddSlider(
+			"Радиус поиска",
+			1200,
+			400,
+			3000,
+			0,
+			"Максимальная дистанция до цели, которую пытаемся блокировать"
+		)
+		this.BodyBlockWeave = blockNode.AddToggle(
+			"Виляние",
+			true,
+			"Поперечные колебания поперёк пути цели — мешает обойти по дуге"
 		)
 	}
 }

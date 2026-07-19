@@ -24,10 +24,12 @@ import {
 	VMouseKeys
 } from "github.com/octarine-public/wrapper/index"
 
+import { BodyBlocker } from "./body-block"
 import { MenuManager } from "./menu"
 
 new (class BadGay {
 	private readonly menu = new MenuManager()
+	private readonly bodyBlocker = new BodyBlocker(this.menu)
 	private readonly paintSleeper = new Sleeper()
 	private dustItemID: number = 0
 	private minimapActive = false
@@ -70,6 +72,7 @@ new (class BadGay {
 		this.drawModeOn = false
 		this.fakeMouseDown = false
 		this.paintSleeper.FullReset()
+		this.bodyBlocker.Reset()
 	}
 
 	private GameEnded(): void {
@@ -99,9 +102,7 @@ new (class BadGay {
 			this.doRightClickSpam(hero)
 		}
 
-		if (this.menu.BodyBlock.value && hero.IsAlive) {
-			this.doBodyBlock(hero)
-		}
+		this.bodyBlocker.Update(hero)
 
 		const paintOn = this.menu.MinimapPaint.value || this.minimapActive
 		if (paintOn) {
@@ -267,30 +268,4 @@ new (class BadGay {
 		})
 	}
 
-	private doBodyBlock(hero: Unit): void {
-		const allies = EntityManager.GetEntitiesByClass(Hero).filter(
-			h => !h.IsEnemy(hero) && h !== hero && h.IsAlive && h.IsValid
-		)
-		if (allies.length === 0) {
-			return
-		}
-		let closest: Hero | undefined
-		let closestDist = Infinity
-		for (const ally of allies) {
-			const dist = hero.Position.Distance(ally.Position)
-			if (dist < closestDist) {
-				closestDist = dist
-				closest = ally
-			}
-		}
-		if (closest === undefined) {
-			return
-		}
-		const allyPos = closest.Position
-		const allyForward = closest.Forward.MultiplyScalar(
-			closest.HullRadius + hero.HullRadius
-		)
-		const blockPos = allyPos.Add(allyForward)
-		hero.MoveTo(blockPos)
-	}
 })()

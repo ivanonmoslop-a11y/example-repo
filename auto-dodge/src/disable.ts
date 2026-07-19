@@ -5,9 +5,6 @@ const TRIGGER_AGE = 0.7
 const RANGE_BUFFER = 100
 
 const TRIGGER_SPELLS: ReadonlyMap<string, number> = new Map([
-	["antimage_blink", 1200],
-	["faceless_void_time_walk", 900],
-	["queenofpain_blink", 1200],
 	["spirit_breaker_nether_strike", 900],
 	["axe_berserkers_call", 320],
 	["legion_commander_duel", 250],

@@ -1,4 +1,4 @@
-import { ImageData, Menu } from "github.com/octarine-public/wrapper/index"
+import { Color, ImageData, Menu } from "github.com/octarine-public/wrapper/index"
 
 export class MenuManager {
 	private readonly base = Menu.AddEntry("Utility")
@@ -9,6 +9,9 @@ export class MenuManager {
 	public readonly DustAbuse: Menu.Toggle
 	public readonly PingSpam: Menu.Toggle
 	public readonly MinimapPaint: Menu.Toggle
+	public readonly MinimapPaintStep: Menu.Slider
+	public readonly MinimapPaintColor: Menu.ColorPicker
+	public readonly MinimapPaintKey: Menu.KeyBind
 	public readonly RightClickSpam: Menu.Toggle
 	public readonly BodyBlock: Menu.Toggle
 
@@ -24,11 +27,32 @@ export class MenuManager {
 			false,
 			"Спам пингов по позициям тиммейтов (все сразу)"
 		)
-		this.MinimapPaint = this.tree.AddToggle(
-			"Minimap Paint",
+
+		const paintNode = this.tree.AddNode("Minimap Paint")
+		this.MinimapPaint = paintNode.AddToggle(
+			"State",
 			false,
-			"Моментально закрасить всю карту рисованием"
+			"Заливка миникарты — перекрывает радар союзникам"
 		)
+		this.MinimapPaintStep = paintNode.AddSlider(
+			"Плотность (шаг линий)",
+			4,
+			1,
+			20,
+			0,
+			"Меньше = плотнее заливка, больше = видны полосы"
+		)
+		this.MinimapPaintColor = paintNode.AddColorPicker(
+			"Цвет заливки",
+			new Color(0, 0, 0),
+			"Чёрный = туман войны, красный/зелёный = раздражение"
+		)
+		this.MinimapPaintKey = paintNode.AddKeybind(
+			"Кнопка вкл/выкл",
+			"None",
+			"Мгновенный старт/стоп заливки карты"
+		)
+
 		this.RightClickSpam = this.tree.AddToggle(
 			"RMB Spam",
 			false,

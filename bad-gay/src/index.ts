@@ -9,15 +9,16 @@ import {
 	ExecuteOrder,
 	GameRules,
 	GameState,
+	GUIInfo,
 	Hero,
 	InputManager,
 	item_dust,
 	LocalPlayer,
 	MinimapSDK,
 	PingType,
+	RendererSDK,
 	Unit,
-	Vector2,
-	Vector3
+	Vector2
 } from "github.com/octarine-public/wrapper/index"
 
 import { MenuManager } from "./menu"
@@ -25,11 +26,15 @@ import { MenuManager } from "./menu"
 new (class BadGay {
 	private readonly menu = new MenuManager()
 	private dustItemID: number = 0
-	private paintDone = false
+	private minimapActive = false
 
 	constructor() {
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
+		EventsSDK.on("Draw2D", this.Draw2D.bind(this))
 		EventsSDK.on("GameStarted", this.GameStarted.bind(this))
+		this.menu.MinimapPaintKey.OnRelease(() => {
+			this.minimapActive = !this.minimapActive
+		})
 	}
 
 	private get InGame(): boolean {
@@ -48,7 +53,7 @@ new (class BadGay {
 
 	private GameStarted(): void {
 		this.dustItemID = 0
-		this.paintDone = false
+		this.minimapActive = false
 	}
 
 	private PostDataUpdate(): void {
@@ -69,10 +74,6 @@ new (class BadGay {
 			this.doPingSpam(hero)
 		}
 
-		if (this.menu.MinimapPaint.value && hero.IsAlive) {
-			this.doMinimapPaint()
-		}
-
 		if (this.menu.RightClickSpam.value && hero.IsAlive) {
 			this.doRightClickSpam(hero)
 		}
@@ -80,6 +81,18 @@ new (class BadGay {
 		if (this.menu.BodyBlock.value && hero.IsAlive) {
 			this.doBodyBlock(hero)
 		}
+	}
+
+	private Draw2D(): void {
+		if (!this.menu.State.value || !this.InGame) {
+			return
+		}
+		const paintEnabled =
+			this.menu.MinimapPaint.value || this.minimapActive
+		if (!paintEnabled) {
+			return
+		}
+		this.doMinimapPaint()
 	}
 
 	private isNearShop(hero: Unit): boolean {
@@ -125,21 +138,15 @@ new (class BadGay {
 	}
 
 	private doMinimapPaint(): void {
-		if (this.paintDone) {
-			return
-		}
-		const step = 512
-		const minX = -8288
-		const minY = -8288
-		const maxX = 8288
-		const maxY = 8288
+		const mmRect = GUIInfo.Minimap.MinimapRenderBounds
+		const color = this.menu.MinimapPaintColor.SelectedColor.Clone()
+		const step = this.menu.MinimapPaintStep.value
 
-		for (let x = minX; x <= maxX; x += step) {
-			for (let y = minY; y <= maxY; y += step) {
-				ExecuteOrder.CastRiverPaint(new Vector3(x, y, 0))
-			}
+		for (let y = 0; y < mmRect.Height; y += step) {
+			const linePos = new Vector2(mmRect.x, mmRect.y + y)
+			const lineSize = new Vector2(mmRect.Width, step)
+			RendererSDK.FilledRect(linePos, lineSize, color)
 		}
-		this.paintDone = true
 	}
 
 	private doRightClickSpam(hero: Unit): void {

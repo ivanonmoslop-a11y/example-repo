@@ -1,4 +1,5 @@
 import {
+	Ability,
 	EntityManager,
 	EventsSDK,
 	FakeUnit,
@@ -14,31 +15,67 @@ import {
 } from "github.com/octarine-public/wrapper/index"
 
 const TRIGGER_RADIUS = 1000
-const JUMP_DIST = 500
+const AMBUSH_RADIUS = 800
+const APPROACH_MIN = 200
 const MAX_WALK_SPEED = 650
 const WALK_MARGIN = 120
-const APPROACH_MIN = 200
+const CONTINUOUS_GAP = 0.35
 const APPROACH_INFO_TTL = 3
+const RECENT_CAST_SLACK = 2.5
+const MIN_GAP_COOLDOWN = 5
+const CAST_FRESH = 0.35
 const ALLY_NEAR = 250
-const ENEMY_NEAR = 300
 const PENDING_TIME = 0.5
 const RETRIGGER_MS = 1000
+const SELF_BLINK_TIME = 0.6
 const SAFE_MIN_DIST = 600
 const CANDIDATES = 16
 const FOUNTAIN_BONUS = 150
-const CLAIM_TIME = 0.35
-const SELF_BLINK_TIME = 0.6
+
+const GAP_CLOSERS = new Set([
+	"antimage_blink",
+	"queenofpain_blink",
+	"riki_blink_strike",
+	"mirana_leap",
+	"slark_pounce",
+	"faceless_void_time_walk",
+	"morphling_waveform",
+	"earth_spirit_rolling_boulder",
+	"phoenix_icarus_dive",
+	"void_spirit_astral_step",
+	"spectre_reality",
+	"spectre_haunt",
+	"magnataur_skewer",
+	"tusk_snowball",
+	"marci_rebound",
+	"pangolier_swashbuckle",
+	"puck_illusory_orb",
+	"puck_ethereal_jaunt",
+	"sandking_burrowstrike",
+	"vengefulspirit_nether_swap",
+	"primal_beast_onslaught",
+	"dawnbreaker_converge",
+	"io_relocate"
+])
+
+interface EnemyTrack {
+	pos: Vector3
+	time: number
+	prevPos: Vector3
+	prevTime: number
+}
 
 export class BlinkEscape {
 	private enabled = true
+	private seeded = false
 	private pendingUntil = 0
 	private selfBlinkUntil = 0
 	private prevOwnCooldown = 0
+	private reason = "none"
 	private blink: Nullable<item_blink>
 	private readonly sleeper = new Sleeper()
-	private readonly lastSeen = new Map<number, [Vector3, number]>()
+	private readonly tracks = new Map<number, EnemyTrack>()
 	private readonly consumed = new Set<number>()
-	private readonly candidates = new Map<number, [Vector3, number]>()
 
 	constructor() {
 		EventsSDK.on("ParticleCreated", particle => this.OnParticle(particle))
@@ -54,13 +91,10 @@ export class BlinkEscape {
 			return "esc:no-blink"
 		}
 		if (this.pendingUntil > GameState.RawGameTime) {
-			return "esc:cast"
-		}
-		if (this.candidates.size > 0) {
-			return "esc:eval"
+			return `esc:cast(${this.reason})`
 		}
 		if (this.sleeper.Sleeping("escape")) {
-			return "esc:cd"
+			return `esc:cd(${this.reason})`
 		}
 		return "esc:watch"
 	}
@@ -69,13 +103,9 @@ export class BlinkEscape {
 		this.enabled = enabled
 		this.ResolveBlink(hero)
 		this.TrackOwnBlink()
-		if (this.enabled && hero.IsAlive) {
-			this.EvaluateCandidates(hero)
-		}
-		this.WatchJumps(hero)
+		this.WatchEnemies(hero)
 		if (!this.enabled || !hero.IsAlive) {
 			this.pendingUntil = 0
-			this.candidates.clear()
 			return
 		}
 		if (this.pendingUntil <= GameState.RawGameTime) {
@@ -90,14 +120,15 @@ export class BlinkEscape {
 	}
 
 	public Reset(): void {
+		this.seeded = false
 		this.pendingUntil = 0
 		this.selfBlinkUntil = 0
 		this.prevOwnCooldown = 0
+		this.reason = "none"
 		this.blink = undefined
 		this.sleeper.FullReset()
-		this.lastSeen.clear()
+		this.tracks.clear()
 		this.consumed.clear()
-		this.candidates.clear()
 	}
 
 	private get Hero(): Nullable<Hero> {
@@ -115,6 +146,87 @@ export class BlinkEscape {
 		this.blink = hero.Items.find((x): x is item_blink => x instanceof item_blink)
 	}
 
+	private WatchEnemies(hero: Hero): void {
+		const now = GameState.RawGameTime
+		const heroPos = hero.Position
+		const active = this.seeded && this.enabled && hero.IsAlive
+		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
+			if (!enemy.IsValid || !enemy.IsEnemy(hero) || enemy.IsIllusion) {
+				continue
+			}
+			if (!enemy.IsAlive) {
+				this.tracks.delete(enemy.Index)
+				continue
+			}
+			if (!enemy.IsVisible) {
+				continue
+			}
+			const cur = enemy.Position.Clone()
+			const track = this.tracks.get(enemy.Index)
+			const inRange = active && cur.Distance2D(heroPos) <= TRIGGER_RADIUS
+			const reason = inRange ? this.ThreatReason(enemy, track, cur, heroPos, now) : undefined
+			this.Track(enemy.Index, track, cur, now)
+			if (reason !== undefined) {
+				this.Trigger(reason)
+			}
+		}
+		this.seeded = true
+	}
+
+	private Track(index: number, track: Nullable<EnemyTrack>, cur: Vector3, now: number): void {
+		if (track === undefined) {
+			this.tracks.set(index, { pos: cur, prevPos: cur, prevTime: now, time: now })
+			return
+		}
+		track.prevPos = track.pos
+		track.prevTime = track.time
+		track.pos = cur
+		track.time = now
+	}
+
+	private ThreatReason(
+		enemy: Hero,
+		track: Nullable<EnemyTrack>,
+		cur: Vector3,
+		heroPos: Vector3,
+		now: number
+	): Nullable<string> {
+		if (track === undefined) {
+			return "new"
+		}
+		const closed = track.pos.Distance2D(heroPos) - cur.Distance2D(heroPos)
+		if (closed < APPROACH_MIN) {
+			return undefined
+		}
+		const gap = now - track.time
+		if (gap > CONTINUOUS_GAP) {
+			if (cur.Distance2D(heroPos) <= AMBUSH_RADIUS) {
+				return "fog"
+			}
+		} else if (closed > gap * MAX_WALK_SPEED + WALK_MARGIN) {
+			return "jump"
+		}
+		return this.JustUsedGapCloser(enemy, now) ? "cd" : undefined
+	}
+
+	private JustUsedGapCloser(enemy: Hero, now: number): boolean {
+		const blink = enemy.GetItemByClass(item_blink)
+		if (blink !== undefined && this.JustCast(blink, now)) {
+			return true
+		}
+		return enemy.Spells.some(x => x !== undefined && x.IsValid && GAP_CLOSERS.has(x.Name) && this.JustCast(x, now))
+	}
+
+	private JustCast(abil: Ability, now: number): boolean {
+		if (abil.Cooldown <= 0 || abil.MaxCooldown < MIN_GAP_COOLDOWN) {
+			return false
+		}
+		if (now - abil.CooldownChangeTime > CAST_FRESH) {
+			return false
+		}
+		return abil.Cooldown >= abil.MaxCooldown - RECENT_CAST_SLACK
+	}
+
 	private OnUnitReveal(unit: FakeUnit | Unit, particle: Nullable<NetworkedParticle>): void {
 		if (!this.enabled || particle === undefined || !this.IsBlinkArrival(particle)) {
 			return
@@ -130,22 +242,14 @@ export class BlinkEscape {
 		if (!pos.IsValid || pos.Distance2D(hero.Position) > TRIGGER_RADIUS) {
 			return
 		}
-		if (unit instanceof Hero && !this.IsApproachingPos(unit.Index, pos, hero)) {
+		if (unit instanceof Unit && !this.IsApproachingPos(unit.Index, pos, hero.Position)) {
 			return
 		}
-		this.Trigger()
-	}
-
-	private IsBlinkArrival(particle: NetworkedParticle): boolean {
-		const path = particle.PathNoEcon
-		return path.includes("blink") && !path.includes("_start")
+		this.Trigger("particle")
 	}
 
 	private OnParticle(particle: NetworkedParticle): void {
-		if (!this.enabled || this.consumed.has(particle.Index)) {
-			return
-		}
-		if (!this.IsBlinkArrival(particle)) {
+		if (!this.enabled || this.consumed.has(particle.Index) || !this.IsBlinkArrival(particle)) {
 			return
 		}
 		const hero = this.Hero
@@ -167,12 +271,16 @@ export class BlinkEscape {
 		}
 		const source = particle.Source
 		if (source !== undefined) {
-			if (source.IsEnemy(hero)) {
-				this.Trigger()
+			if (!source.IsEnemy(hero) || !this.IsApproachingPos(source.Index, cp, hero.Position)) {
+				return
 			}
+			this.Trigger("particle")
 			return
 		}
-		this.candidates.set(particle.Index, [cp.Clone(), GameState.RawGameTime + CLAIM_TIME])
+		if (this.IsOwnBlink(cp, hero) || this.HasAllyNear(cp, hero)) {
+			return
+		}
+		this.Trigger("particle")
 	}
 
 	private HandleAttached(particle: NetworkedParticle, attached: FakeUnit | Unit, hero: Hero): void {
@@ -188,10 +296,15 @@ export class BlinkEscape {
 		if (pos.Distance2D(hero.Position) > TRIGGER_RADIUS) {
 			return
 		}
-		if (attached instanceof Hero && !this.IsApproachingPos(attached.Index, pos, hero)) {
+		if (attached instanceof Unit && !this.IsApproachingPos(attached.Index, pos, hero.Position)) {
 			return
 		}
-		this.Trigger()
+		this.Trigger("particle")
+	}
+
+	private IsBlinkArrival(particle: NetworkedParticle): boolean {
+		const path = particle.PathNoEcon
+		return path.includes("blink") && !path.includes("_start")
 	}
 
 	private ParticlePosition(particle: NetworkedParticle): Nullable<Vector3> {
@@ -214,27 +327,12 @@ export class BlinkEscape {
 		}
 	}
 
-	private EvaluateCandidates(hero: Hero): void {
-		if (this.candidates.size === 0) {
-			return
+	private IsApproachingPos(index: number, landing: Vector3, heroPos: Vector3): boolean {
+		const track = this.tracks.get(index)
+		if (track === undefined || GameState.RawGameTime - track.prevTime > APPROACH_INFO_TTL) {
+			return true
 		}
-		const now = GameState.RawGameTime
-		const heroes = EntityManager.GetEntitiesByClass(Hero)
-		for (const [index, [pos, until]] of this.candidates) {
-			if (this.HasEnemyNear(heroes, pos, hero)) {
-				this.candidates.delete(index)
-				this.Trigger()
-				continue
-			}
-			if (this.IsOwnBlink(pos, hero) || this.HasAllyNear(heroes, pos, hero)) {
-				this.candidates.delete(index)
-				continue
-			}
-			if (now > until) {
-				this.candidates.delete(index)
-				this.Trigger()
-			}
-		}
+		return track.prevPos.Distance2D(heroPos) - landing.Distance2D(heroPos) >= APPROACH_MIN
 	}
 
 	private IsOwnBlink(pos: Vector3, hero: Hero): boolean {
@@ -254,56 +352,8 @@ export class BlinkEscape {
 		this.prevOwnCooldown = cd
 	}
 
-	private WatchJumps(hero: Hero): void {
-		const now = GameState.RawGameTime
-		const enemies = EntityManager.GetEntitiesByClass(Hero)
-		for (const enemy of enemies) {
-			if (!enemy.IsValid || !enemy.IsEnemy(hero) || enemy.IsIllusion) {
-				continue
-			}
-			if (!enemy.IsAlive) {
-				this.lastSeen.delete(enemy.Index)
-				continue
-			}
-			if (!enemy.IsVisible) {
-				continue
-			}
-			const cur = enemy.Position.Clone()
-			const prev = this.lastSeen.get(enemy.Index)
-			this.lastSeen.set(enemy.Index, [cur, now])
-			if (prev === undefined) {
-				continue
-			}
-			const [prevPos, prevTime] = prev
-			const dt = now - prevTime
-			const dist = prevPos.Distance2D(cur)
-			if (dist <= Math.max(JUMP_DIST, dt * MAX_WALK_SPEED + WALK_MARGIN)) {
-				continue
-			}
-			const curDist = cur.Distance2D(hero.Position)
-			if (curDist > TRIGGER_RADIUS) {
-				continue
-			}
-			if (prevPos.Distance2D(hero.Position) - curDist < APPROACH_MIN) {
-				continue
-			}
-			if (this.enabled && hero.IsAlive) {
-				this.Trigger()
-			}
-		}
-	}
-
-	private IsApproachingPos(index: number, landing: Vector3, hero: Hero): boolean {
-		const prev = this.lastSeen.get(index)
-		if (prev === undefined || GameState.RawGameTime - prev[1] > APPROACH_INFO_TTL) {
-			return true
-		}
-		const diff = prev[0].Distance2D(hero.Position) - landing.Distance2D(hero.Position)
-		return diff >= APPROACH_MIN
-	}
-
-	private HasAllyNear(heroes: Hero[], pos: Vector3, hero: Hero): boolean {
-		return heroes.some(
+	private HasAllyNear(pos: Vector3, hero: Hero): boolean {
+		return EntityManager.GetEntitiesByClass(Hero).some(
 			x =>
 				x.IsValid &&
 				x !== hero &&
@@ -314,24 +364,12 @@ export class BlinkEscape {
 		)
 	}
 
-	private HasEnemyNear(heroes: Hero[], pos: Vector3, hero: Hero): boolean {
-		return heroes.some(
-			x =>
-				x.IsValid &&
-				x.IsEnemy(hero) &&
-				x.IsAlive &&
-				x.IsVisible &&
-				!x.IsIllusion &&
-				x.Position.Distance2D(pos) <= ENEMY_NEAR &&
-				this.IsApproachingPos(x.Index, x.Position, hero)
-		)
-	}
-
-	private Trigger(): void {
+	private Trigger(reason: string): void {
 		if (this.sleeper.Sleeping("escape")) {
 			return
 		}
 		this.sleeper.Sleep(RETRIGGER_MS, "escape")
+		this.reason = reason
 		this.pendingUntil = GameState.RawGameTime + PENDING_TIME
 	}
 

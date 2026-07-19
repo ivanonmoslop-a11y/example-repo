@@ -191,7 +191,7 @@ export class DodgePanel {
 
 	private GetLayout(): Nullable<PanelLayout> {
 		const shown = this.slots.filter(x => x.IsShown)
-		const disableShown = this.disableSlots.filter(x => x.IsFound)
+		const disableShown = this.disableSlots
 
 		const pad = GUIInfo.ScaleHeight(PAD)
 		const icon = GUIInfo.ScaleHeight(ICON)

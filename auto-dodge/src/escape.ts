@@ -26,6 +26,8 @@ const APPROACH_INFO_TTL = 3
 const RECENT_CAST_SLACK = 2.5
 const MIN_GAP_COOLDOWN = 5
 const CAST_FRESH = 0.35
+const REVEAL_WINDOW = 0.6
+const REVEAL_CD_SLACK = 1.5
 const ALLY_NEAR = 250
 const PENDING_TIME = 0.5
 const RETRIGGER_MS = 1000
@@ -67,6 +69,14 @@ interface EnemyTrack {
 	prevTime: number
 }
 
+interface RevealCandidate {
+	enemy: Hero
+	revealPos: Vector3
+	revealTime: number
+	preFogPos: Nullable<Vector3>
+	preFogTime: number
+}
+
 export class BlinkEscape {
 	private enabled = true
 	private pendingUntil = 0
@@ -76,6 +86,7 @@ export class BlinkEscape {
 	private blink: Nullable<item_blink>
 	private readonly sleeper = new Sleeper()
 	private readonly tracks = new Map<number, EnemyTrack>()
+	private readonly reveals = new Map<number, RevealCandidate>()
 	private readonly consumed = new Set<number>()
 
 	constructor() {
@@ -105,6 +116,7 @@ export class BlinkEscape {
 		this.ResolveBlink(hero)
 		this.TrackOwnBlink()
 		this.WatchEnemies(hero)
+		this.EvaluateReveals(hero)
 		if (!this.enabled || !hero.IsAlive) {
 			this.pendingUntil = 0
 			return
@@ -128,6 +140,7 @@ export class BlinkEscape {
 		this.blink = undefined
 		this.sleeper.FullReset()
 		this.tracks.clear()
+		this.reveals.clear()
 		this.consumed.clear()
 	}
 
@@ -156,6 +169,7 @@ export class BlinkEscape {
 			}
 			if (!enemy.IsAlive) {
 				this.tracks.delete(enemy.Index)
+				this.reveals.delete(enemy.Index)
 				continue
 			}
 			if (!enemy.IsVisible) {
@@ -164,6 +178,15 @@ export class BlinkEscape {
 			const cur = enemy.Position.Clone()
 			const track = this.tracks.get(enemy.Index)
 			const inRange = active && cur.Distance2D(heroPos) <= TRIGGER_RADIUS
+			if (inRange && (track === undefined || now - track.time > CONTINUOUS_GAP)) {
+				this.reveals.set(enemy.Index, {
+					enemy,
+					preFogPos: track?.pos,
+					preFogTime: track?.time ?? 0,
+					revealPos: cur,
+					revealTime: now
+				})
+			}
 			const reason = inRange ? this.ThreatReason(enemy, track, cur, heroPos, now) : undefined
 			this.Track(enemy.Index, track, cur, now)
 			if (reason !== undefined) {
@@ -209,6 +232,53 @@ export class BlinkEscape {
 			return "jump"
 		}
 		return this.JustUsedGapCloser(enemy, now) ? "cd" : undefined
+	}
+
+	// A fogged enemy's abilities are PVS-culled, so the cooldown proving a blink often
+	// lands a tick or two after the reveal — candidates stay alive for a few ticks
+	// instead of checking only the reveal tick.
+	private EvaluateReveals(hero: Hero): void {
+		const now = GameState.RawGameTime
+		for (const [index, cand] of this.reveals) {
+			if (now - cand.revealTime > REVEAL_WINDOW || !cand.enemy.IsValid || !cand.enemy.IsAlive) {
+				this.reveals.delete(index)
+				continue
+			}
+			if (!this.JustUsedGapCloserAt(cand.enemy, cand.revealTime)) {
+				continue
+			}
+			this.reveals.delete(index)
+			if (this.IsApproachingReveal(cand, hero.Position)) {
+				this.Trigger("fog")
+			}
+		}
+	}
+
+	private IsApproachingReveal(cand: RevealCandidate, heroPos: Vector3): boolean {
+		if (cand.preFogPos === undefined || cand.revealTime - cand.preFogTime > APPROACH_INFO_TTL) {
+			return true
+		}
+		return cand.preFogPos.Distance2D(heroPos) - cand.revealPos.Distance2D(heroPos) >= APPROACH_MIN
+	}
+
+	private JustUsedGapCloserAt(enemy: Hero, revealTime: number): boolean {
+		const blink = enemy.GetItemByClass(item_blink)
+		if (blink !== undefined && this.JustCastAt(blink, revealTime)) {
+			return true
+		}
+		return enemy.Spells.some(
+			x => x !== undefined && x.IsValid && GAP_CLOSERS.has(x.Name) && this.JustCastAt(x, revealTime)
+		)
+	}
+
+	private JustCastAt(abil: Ability, revealTime: number): boolean {
+		if (abil.Cooldown <= 0 || abil.MaxCooldown < MIN_GAP_COOLDOWN) {
+			return false
+		}
+		if (abil.CooldownChangeTime < revealTime - CAST_FRESH) {
+			return false
+		}
+		return abil.Cooldown >= abil.MaxCooldown - REVEAL_CD_SLACK
 	}
 
 	private JustUsedGapCloser(enemy: Hero, now: number): boolean {

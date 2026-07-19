@@ -1,6 +1,6 @@
-import { GameState, Hero, ImageData, Item, Sleeper } from "github.com/octarine-public/wrapper/index"
+import { Ability, GameState, Hero, ImageData, Sleeper } from "github.com/octarine-public/wrapper/index"
 
-const CAST_SLEEP_MS = 900
+const TARGET_SLEEP = 1.2
 const TRIGGER_AGE = 0.7
 const RANGE_BUFFER = 100
 
@@ -12,6 +12,7 @@ const enum DisableMode {
 
 export interface DisableDef {
 	readonly key: string
+	readonly isItem: boolean
 	readonly names: string[]
 	readonly mode: DisableMode
 	readonly magic: boolean
@@ -19,25 +20,80 @@ export interface DisableDef {
 }
 
 const DISABLE_DEFS: DisableDef[] = [
-	{ key: "bloodthorn", names: ["item_bloodthorn"], mode: DisableMode.Enemy, magic: true, range: 900 },
-	{ key: "orchid", names: ["item_orchid"], mode: DisableMode.Enemy, magic: true, range: 900 },
-	{ key: "sheep", names: ["item_sheepstick"], mode: DisableMode.Enemy, magic: true, range: 800 },
-	{ key: "ethereal", names: ["item_ethereal_blade"], mode: DisableMode.Enemy, magic: true, range: 800 },
-	{ key: "abyssal", names: ["item_abyssal_blade"], mode: DisableMode.Enemy, magic: false, range: 350 },
+	{
+		key: "bloodthorn",
+		isItem: true,
+		names: ["item_bloodthorn"],
+		mode: DisableMode.Enemy,
+		magic: true,
+		range: 900
+	},
+	{ key: "orchid", isItem: true, names: ["item_orchid"], mode: DisableMode.Enemy, magic: true, range: 900 },
+	{ key: "sheep", isItem: true, names: ["item_sheepstick"], mode: DisableMode.Enemy, magic: true, range: 800 },
+	{ key: "hex", isItem: false, names: ["lion_voodoo"], mode: DisableMode.Enemy, magic: true, range: 500 },
+	{
+		key: "astral",
+		isItem: false,
+		names: ["obsidian_destroyer_astral_imprisonment"],
+		mode: DisableMode.Enemy,
+		magic: true,
+		range: 500
+	},
+	{
+		key: "ethereal",
+		isItem: true,
+		names: ["item_ethereal_blade"],
+		mode: DisableMode.Enemy,
+		magic: true,
+		range: 800
+	},
+	{
+		key: "abyssal",
+		isItem: true,
+		names: ["item_abyssal_blade"],
+		mode: DisableMode.Enemy,
+		magic: false,
+		range: 350
+	},
 	{
 		key: "eul",
+		isItem: true,
 		names: ["item_cyclone", "item_wind_waker"],
 		mode: DisableMode.Enemy,
 		magic: true,
 		range: 550
 	},
-	{ key: "ghost", names: ["item_ghost"], mode: DisableMode.NoTarget, magic: false, range: 0 },
-	{ key: "glimmer", names: ["item_glimmer_cape"], mode: DisableMode.Self, magic: false, range: 800 }
+	{
+		key: "pike",
+		isItem: true,
+		names: ["item_hurricane_pike"],
+		mode: DisableMode.Enemy,
+		magic: true,
+		range: 550
+	},
+	{ key: "force", isItem: true, names: ["item_force_staff"], mode: DisableMode.Enemy, magic: true, range: 800 },
+	{
+		key: "inner_fire",
+		isItem: false,
+		names: ["huskar_inner_fire"],
+		mode: DisableMode.NoTarget,
+		magic: true,
+		range: 400
+	},
+	{ key: "ghost", isItem: true, names: ["item_ghost"], mode: DisableMode.NoTarget, magic: false, range: 0 },
+	{
+		key: "glimmer",
+		isItem: true,
+		names: ["item_glimmer_cape"],
+		mode: DisableMode.Self,
+		magic: false,
+		range: 0
+	}
 ]
 
 export class DisableSlot {
 	public enabled = true
-	public ability: Nullable<Item>
+	public ability: Nullable<Ability>
 
 	constructor(public readonly def: DisableDef) {}
 
@@ -45,10 +101,14 @@ export class DisableSlot {
 		return this.ability !== undefined && this.ability.IsValid
 	}
 
+	public get IsShown(): boolean {
+		return this.def.isItem || this.IsFound
+	}
+
 	public get Texture(): string {
 		const abil = this.ability
 		const name = abil !== undefined && abil.IsValid ? abil.Name : this.def.names[0]
-		return ImageData.GetItemTexture(name)
+		return this.def.isItem ? ImageData.GetItemTexture(name) : ImageData.GetSpellTexture(name)
 	}
 
 	public CanUse(hero: Hero, target: Hero): boolean {
@@ -56,14 +116,17 @@ export class DisableSlot {
 		if (!this.enabled || abil === undefined || !abil.IsValid || !abil.CanBeCasted()) {
 			return false
 		}
-		if (hero.IsMuted) {
+		if (this.def.isItem ? hero.IsMuted : hero.IsSilenced) {
 			return false
 		}
-		if (this.def.mode !== DisableMode.Enemy) {
+		if (this.def.mode === DisableMode.Self) {
 			return true
 		}
 		if (this.def.magic && target.IsMagicImmune) {
 			return false
+		}
+		if (this.def.mode === DisableMode.NoTarget && this.def.range <= 0) {
+			return true
 		}
 		const range = Math.max(abil.CastRange, this.def.range) + RANGE_BUFFER
 		return hero.Distance2D(target) <= range
@@ -74,7 +137,9 @@ export class DisableSlot {
 		if (abil !== undefined && abil.IsValid && abil.Owner === hero) {
 			return
 		}
-		this.ability = hero.Items.find(x => this.def.names.includes(x.Name))
+		this.ability = this.def.isItem
+			? hero.Items.find(x => this.def.names.includes(x.Name))
+			: hero.Spells.find((x): x is Ability => x !== undefined && this.def.names.includes(x.Name))
 	}
 }
 
@@ -84,6 +149,7 @@ export function CreateDisableSlots(): DisableSlot[] {
 
 export class AutoDisable {
 	private readonly sleeper = new Sleeper()
+	private readonly castAt = new Map<number, number>()
 	private status = "none"
 
 	constructor(private readonly slots: DisableSlot[]) {}
@@ -92,7 +158,7 @@ export class AutoDisable {
 		return `dis:${this.status}`
 	}
 
-	public Tick(hero: Hero, enabled: boolean, target: Nullable<Hero>): void {
+	public Tick(hero: Hero, enabled: boolean, targets: Hero[]): void {
 		for (const item of this.slots) {
 			item.Resolve(hero)
 		}
@@ -100,46 +166,67 @@ export class AutoDisable {
 			this.status = "off"
 			return
 		}
-		if (!hero.IsAlive || hero.IsStunned || hero.IsHexed || hero.IsMuted) {
+		if (!hero.IsAlive || hero.IsStunned || hero.IsHexed) {
 			this.status = "cant"
 			return
 		}
-		if (target === undefined) {
+		if (targets.length === 0) {
 			this.status = "watch"
 			return
 		}
-		if (this.sleeper.Sleeping("disable")) {
-			this.status = "cd"
-			return
+
+		const now = GameState.RawGameTime
+		const used = new Set<DisableSlot>()
+		const done: string[] = []
+		for (const target of targets) {
+			const last = this.castAt.get(target.Index) ?? 0
+			if (now - last < TARGET_SLEEP) {
+				continue
+			}
+			if (target.IsHexed || target.IsStunned) {
+				continue
+			}
+			const slot = this.slots.find(x => !used.has(x) && x.CanUse(hero, target))
+			if (slot === undefined) {
+				continue
+			}
+			this.Cast(hero, slot, target)
+			used.add(slot)
+			this.castAt.set(target.Index, now)
+			done.push(`${slot.def.key}>${target.Index}`)
 		}
-		if (target.IsHexed || target.IsStunned) {
-			this.status = "held"
-			return
-		}
-		const slot = this.slots.find(x => x.CanUse(hero, target))
-		if (slot === undefined) {
-			this.status = "no-item"
-			return
-		}
-		const abil = slot.ability
-		if (abil === undefined) {
-			this.status = "no-item"
-			return
-		}
-		if (slot.def.mode === DisableMode.NoTarget) {
-			hero.CastNoTarget(abil)
-		} else if (slot.def.mode === DisableMode.Self) {
-			hero.CastTarget(abil, hero)
-		} else {
-			hero.CastTarget(abil, target)
-		}
-		this.sleeper.Sleep(CAST_SLEEP_MS, "disable")
-		this.status = `${slot.def.key}@${Math.round(GameState.RawGameTime)}`
+		this.Prune(now)
+		this.status = done.length !== 0 ? done.join(",") : `hold${targets.length}`
 	}
 
 	public Reset(): void {
 		this.sleeper.FullReset()
+		this.castAt.clear()
 		this.status = "none"
+	}
+
+	private Cast(hero: Hero, slot: DisableSlot, target: Hero): void {
+		const abil = slot.ability
+		if (abil === undefined) {
+			return
+		}
+		if (slot.def.mode === DisableMode.NoTarget) {
+			hero.CastNoTarget(abil)
+			return
+		}
+		if (slot.def.mode === DisableMode.Self) {
+			hero.CastTarget(abil, hero)
+			return
+		}
+		hero.CastTarget(abil, target)
+	}
+
+	private Prune(now: number): void {
+		for (const [index, time] of this.castAt) {
+			if (now - time > TARGET_SLEEP * 4) {
+				this.castAt.delete(index)
+			}
+		}
 	}
 }
 

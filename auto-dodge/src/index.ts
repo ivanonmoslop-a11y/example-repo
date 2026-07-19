@@ -86,7 +86,7 @@ new (class AutoDodge {
 			counter.Resolve(hero)
 		}
 		this.escape.Tick(hero, this.panel.blinkAway, this.panel.autoDisable)
-		this.autoDisable.Tick(hero, this.panel.autoDisable, this.escape.BlinkTarget(hero, DISABLE_TRIGGER_AGE))
+		this.autoDisable.Tick(hero, this.panel.autoDisable, this.escape.BlinkTargets(hero, DISABLE_TRIGGER_AGE))
 		this.moveDodge.moveDodgeEnabled = this.panel.moveDodgeEnabled
 		this.moveDodge.blockControl = this.panel.blockControl
 		this.moveDodge.Tick(hero)

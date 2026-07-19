@@ -191,7 +191,7 @@ export class DodgePanel {
 
 	private GetLayout(): Nullable<PanelLayout> {
 		const shown = this.slots.filter(x => x.IsShown)
-		const disableShown = this.disableSlots
+		const disableShown = this.disableSlots.filter(x => x.IsShown)
 
 		const pad = GUIInfo.ScaleHeight(PAD)
 		const icon = GUIInfo.ScaleHeight(ICON)
@@ -202,12 +202,13 @@ export class DodgePanel {
 
 		const counterW = pad + shown.length * (icon + pad)
 		const minMoveW = pad + MOVE_COLS_MIN * (moveIcon + pad)
-		const disableW = pad + disableShown.length * (icon + pad)
-		const width = Math.max(counterW, minMoveW, disableW)
+		const width = Math.max(counterW, minMoveW)
 		const moveCols = Math.max(1, Math.floor((width - pad) / (moveIcon + pad)))
 		const moveRows = Math.ceil(this.moveSlots.length / moveCols)
+		const disableCols = Math.max(1, Math.floor((width - pad) / (icon + pad)))
+		const disableRows = Math.ceil(disableShown.length / disableCols)
 		const counterRowH = shown.length > 0 ? icon + pad : 0
-		const disableRowH = disableShown.length > 0 ? icon + pad : 0
+		const disableRowH = disableRows * (icon + pad)
 
 		const height =
 			headerH +
@@ -272,13 +273,15 @@ export class DodgePanel {
 		y += buttonH + pad
 
 		const disableSlotRects: [DisableSlot, Rectangle][] = []
-		let disableX = p.x + pad
-		for (const slot of disableShown) {
+		for (let i = 0; i < disableShown.length; i++) {
+			const col = i % disableCols
+			const row = Math.floor(i / disableCols)
+			const sx = p.x + pad + col * (icon + pad)
+			const sy = y + row * (icon + pad)
 			disableSlotRects.push([
-				slot,
-				new Rectangle(new Vector2(disableX, y), new Vector2(disableX + icon, y + icon))
+				disableShown[i],
+				new Rectangle(new Vector2(sx, sy), new Vector2(sx + icon, sy + icon))
 			])
-			disableX += icon + pad
 		}
 
 		return {

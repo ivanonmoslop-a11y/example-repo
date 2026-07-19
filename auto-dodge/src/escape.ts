@@ -90,8 +90,8 @@ export class BlinkEscape {
 	private detect = true
 	private pendingUntil = 0
 	private lastTriggerTime = 0
-	private lastTriggerIndex = -1
 	private readonly lastTriggerPos = new Vector3().Invalidate()
+	private readonly jumpers = new Map<number, number>()
 	private selfBlinkUntil = 0
 	private prevOwnCooldown = 0
 	private reason = "none"
@@ -115,28 +115,26 @@ export class BlinkEscape {
 		return this.events.map(x => `${(now - x.time).toFixed(1)} ${x.text}`)
 	}
 
-	public BlinkTarget(hero: Hero, maxAge: number): Nullable<Hero> {
-		if (this.lastTriggerTime <= 0 || GameState.RawGameTime - this.lastTriggerTime > maxAge) {
-			return undefined
+	public BlinkTargets(hero: Hero, maxAge: number): Hero[] {
+		const now = GameState.RawGameTime
+		for (const [index, time] of this.jumpers) {
+			if (now - time > maxAge) {
+				this.jumpers.delete(index)
+			}
 		}
 		const enemies = EntityManager.GetEntitiesByClass(Hero).filter(
 			x => x.IsValid && x.IsAlive && x.IsVisible && !x.IsIllusion && x.IsEnemy(hero)
 		)
-		const known = enemies.find(x => x.Index === this.lastTriggerIndex)
-		if (known !== undefined) {
-			return known
+		const targets = enemies.filter(x => this.jumpers.has(x.Index))
+		if (targets.length !== 0) {
+			return targets.sort((a, b) => a.Distance2D(hero) - b.Distance2D(hero))
+		}
+		if (this.lastTriggerTime <= 0 || now - this.lastTriggerTime > maxAge) {
+			return []
 		}
 		const from = this.lastTriggerPos.IsValid ? this.lastTriggerPos : hero.Position
-		let best: Nullable<Hero>
-		let bestDist = TRIGGER_RADIUS
-		for (const enemy of enemies) {
-			const dist = enemy.Position.Distance2D(from)
-			if (dist < bestDist) {
-				bestDist = dist
-				best = enemy
-			}
-		}
-		return best
+		const nearest = this.NearestEnemyTo(from)
+		return nearest !== undefined ? [nearest] : []
 	}
 
 	public get Status(): string {
@@ -186,6 +184,7 @@ export class BlinkEscape {
 		this.sleeper.FullReset()
 		this.tracks.clear()
 		this.reveals.clear()
+		this.jumpers.clear()
 		this.marks.length = 0
 		this.events.length = 0
 		this.consumed.clear()
@@ -586,19 +585,47 @@ export class BlinkEscape {
 	}
 
 	private Trigger(reason: string, pos?: Vector3, enemy?: Hero): void {
-		if (this.sleeper.Sleeping("escape")) {
-			return
-		}
-		this.sleeper.Sleep(RETRIGGER_MS, "escape")
-		this.reason = reason
-		this.pendingUntil = GameState.RawGameTime + PENDING_TIME
-		this.lastTriggerTime = GameState.RawGameTime
-		this.lastTriggerIndex = enemy?.Index ?? -1
+		const now = GameState.RawGameTime
+		this.lastTriggerTime = now
 		if (pos !== undefined) {
 			pos.CopyTo(this.lastTriggerPos)
 		} else {
 			this.lastTriggerPos.Invalidate()
 		}
+		if (enemy !== undefined) {
+			this.jumpers.set(enemy.Index, now)
+		} else if (this.lastTriggerPos.IsValid) {
+			const near = this.NearestEnemyTo(this.lastTriggerPos)
+			if (near !== undefined) {
+				this.jumpers.set(near.Index, now)
+			}
+		}
+		if (this.sleeper.Sleeping("escape")) {
+			return
+		}
+		this.sleeper.Sleep(RETRIGGER_MS, "escape")
+		this.reason = reason
+		this.pendingUntil = now + PENDING_TIME
+	}
+
+	private NearestEnemyTo(pos: Vector3): Nullable<Hero> {
+		const hero = this.Hero
+		if (hero === undefined) {
+			return undefined
+		}
+		let best: Nullable<Hero>
+		let bestDist = TRIGGER_RADIUS
+		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
+			if (!enemy.IsValid || !enemy.IsAlive || !enemy.IsVisible || enemy.IsIllusion || !enemy.IsEnemy(hero)) {
+				continue
+			}
+			const dist = enemy.Position.Distance2D(pos)
+			if (dist < bestDist) {
+				bestDist = dist
+				best = enemy
+			}
+		}
+		return best
 	}
 
 	private PickDestination(hero: Hero, range: number): Vector3 {

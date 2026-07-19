@@ -104,10 +104,7 @@ export class MinimapPainter {
 			this.endStroke()
 			return
 		}
-		if (
-			this.lastScreenSample !== undefined &&
-			this.lastScreenSample.Distance(cursor) < SAMPLE_DISTANCE
-		) {
+		if (this.lastScreenSample !== undefined && this.lastScreenSample.Distance(cursor) < SAMPLE_DISTANCE) {
 			return
 		}
 		this.lastScreenSample = cursor.Clone()
@@ -171,10 +168,7 @@ export class MinimapPainter {
 			const dx = leftToRight ? step : -step
 			for (let x = from; leftToRight ? x <= to : x >= to; x += dx) {
 				this.autoPath.push(
-					new Vector2(
-						x + (Math.random() - 0.5) * wobble,
-						rowY + (Math.random() - 0.5) * wobble * 0.3
-					)
+					new Vector2(x + (Math.random() - 0.5) * wobble, rowY + (Math.random() - 0.5) * wobble * 0.3)
 				)
 			}
 			leftToRight = !leftToRight

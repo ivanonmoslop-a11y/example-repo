@@ -102,7 +102,7 @@ new (class BadGay {
 			this.doRightClickSpam(hero)
 		}
 
-		this.bodyBlocker.Update(hero)
+		this.bodyBlocker.Update()
 
 		const paintOn = this.menu.MinimapPaint.value || this.minimapActive
 		if (paintOn) {
@@ -169,19 +169,13 @@ new (class BadGay {
 			if (leftToRight) {
 				for (let x = minX; x <= maxX; x += step) {
 					this.paintPoints.push(
-						new Vector2(
-							x + (Math.random() - 0.5) * wobble,
-							wy + (Math.random() - 0.5) * wobble * 0.3
-						)
+						new Vector2(x + (Math.random() - 0.5) * wobble, wy + (Math.random() - 0.5) * wobble * 0.3)
 					)
 				}
 			} else {
 				for (let x = maxX; x >= minX; x -= step) {
 					this.paintPoints.push(
-						new Vector2(
-							x + (Math.random() - 0.5) * wobble,
-							wy + (Math.random() - 0.5) * wobble * 0.3
-						)
+						new Vector2(x + (Math.random() - 0.5) * wobble, wy + (Math.random() - 0.5) * wobble * 0.3)
 					)
 				}
 			}
@@ -202,11 +196,7 @@ new (class BadGay {
 
 	private stopDrawMode(): void {
 		if (this.fakeMouseDown) {
-			this.emitMouse(
-				InputMessage.WM_LBUTTONUP,
-				CursorPosition[0],
-				CursorPosition[1]
-			)
+			this.emitMouse(InputMessage.WM_LBUTTONUP, CursorPosition[0], CursorPosition[1])
 			this.fakeMouseDown = false
 		}
 		if (this.drawModeOn) {
@@ -234,9 +224,7 @@ new (class BadGay {
 		this.startDrawMode()
 
 		const worldPos = this.paintPoints[this.paintIndex]
-		const screenPos = MinimapSDK.WorldToMinimap(
-			Vector3.FromVector2(worldPos)
-		)
+		const screenPos = MinimapSDK.WorldToMinimap(Vector3.FromVector2(worldPos))
 		const sx = Math.round(screenPos.x)
 		const sy = Math.round(screenPos.y)
 
@@ -267,5 +255,4 @@ new (class BadGay {
 			isPlayerInput: false
 		})
 	}
-
 })()

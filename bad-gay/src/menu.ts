@@ -8,6 +8,8 @@ export class MenuManager {
 	public readonly State: Menu.Toggle
 	public readonly DustAbuse: Menu.Toggle
 	public readonly DustKey: Menu.KeyBind
+	public readonly PingSpam: Menu.Toggle
+	public readonly PingKey: Menu.KeyBind
 
 	constructor() {
 		this.State = this.tree.AddToggle("State", true, "Главный переключатель скрипта")
@@ -20,6 +22,16 @@ export class MenuManager {
 			"Dust Abuse Key",
 			"None",
 			"Зажми — даст спамит, отпусти — стоп"
+		)
+		this.PingSpam = this.tree.AddToggle(
+			"Ping Spam",
+			false,
+			"Спам пингов по позициям тиммейтов"
+		)
+		this.PingKey = this.tree.AddKeybind(
+			"Ping Spam Key",
+			"None",
+			"Зажми — спамит пинги на тиммейтов"
 		)
 	}
 }

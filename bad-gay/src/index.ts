@@ -3,12 +3,17 @@ import {
 	DOTAGameState,
 	DOTAGameUIState,
 	DOTA_SHOP_TYPE,
+	EntityManager,
 	EventsSDK,
 	GameRules,
 	GameState,
+	Hero,
 	item_dust,
 	LocalPlayer,
-	Unit
+	MinimapSDK,
+	PingType,
+	Unit,
+	Vector2
 } from "github.com/octarine-public/wrapper/index"
 
 import { MenuManager } from "./menu"
@@ -16,6 +21,7 @@ import { MenuManager } from "./menu"
 new (class BadGay {
 	private readonly menu = new MenuManager()
 	private dustItemID: number = 0
+	private pingIndex: number = 0
 
 	constructor() {
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
@@ -36,14 +42,19 @@ new (class BadGay {
 
 	private PostDataUpdate(): void {
 		if (!this.menu.State.value || !this.InGame) return
-		if (!this.menu.DustAbuse.value && !this.menu.DustKey.isPressed) return
 
 		const hero = LocalPlayer?.Hero
 		if (hero === undefined || !hero.IsAlive) return
 
-		if (!this.isNearShop(hero)) return
+		if (this.menu.DustAbuse.value || this.menu.DustKey.isPressed) {
+			if (this.isNearShop(hero)) {
+				this.doDustAbuse(hero)
+			}
+		}
 
-		this.doDustAbuse(hero)
+		if (this.menu.PingSpam.value || this.menu.PingKey.isPressed) {
+			this.doPingSpam(hero)
+		}
 	}
 
 	private isNearShop(hero: Unit): boolean {
@@ -62,5 +73,18 @@ new (class BadGay {
 		}
 		if (this.dustItemID === 0) return
 		hero.PurchaseItem(this.dustItemID)
+	}
+
+	private doPingSpam(hero: Unit): void {
+		const allies = EntityManager.GetEntitiesByClass(Hero).filter(
+			h => !h.IsEnemy(hero) && h !== hero && h.IsAlive && h.IsValid
+		)
+		if (allies.length === 0) return
+
+		this.pingIndex = this.pingIndex % allies.length
+		const target = allies[this.pingIndex]
+		const pos = Vector2.FromVector3(target.Position)
+		MinimapSDK.SendPing(pos, PingType.NORMAL, true, target)
+		this.pingIndex++
 	}
 })()

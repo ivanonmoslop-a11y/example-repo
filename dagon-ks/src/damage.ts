@@ -38,10 +38,15 @@ export function isLinkensBlocked(target: Unit): boolean {
 	return target.IsLinkensProtected || target.HasLinkenAtTime(0)
 }
 
+export function isInCastRange(hero: Unit, target: Unit, castRange: number): boolean {
+	const dist = hero.Distance2D(target) - hero.HullRadius - target.HullRadius
+	return dist <= castRange
+}
+
 export function canDagonKill(hero: Unit, dagon: Item, target: Unit): boolean {
 	if (isImmune(target)) return false
 	if (isLinkensBlocked(target)) return false
-	if (hero.Distance2D(target) > dagon.CastRange) return false
+	if (!isInCastRange(hero, target, dagon.CastRange)) return false
 	const damage = dagon.GetDamage(target)
 	return target.HP <= damage
 }
@@ -55,7 +60,7 @@ export function canEbladeComboKill(
 	if (isImmune(target)) return false
 	if (isLinkensBlocked(target)) return false
 	const maxRange = Math.min(eblade.CastRange, dagon.CastRange)
-	if (hero.Distance2D(target) > maxRange) return false
+	if (!isInCastRange(hero, target, maxRange)) return false
 
 	const ebladeDmg = eblade.GetDamage(target)
 	let dagonDmg = dagon.GetDamage(target)

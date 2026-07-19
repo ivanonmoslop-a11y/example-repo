@@ -21,7 +21,7 @@ import {
 	Vector2
 } from "github.com/octarine-public/wrapper/index"
 
-import { canDagonKill, canEbladeComboKill, getHeroPriority } from "./damage"
+import { canDagonKill, canEbladeComboKill, getHeroPriority, isInCastRange } from "./damage"
 import { MenuManager } from "./menu"
 
 interface KillTarget {
@@ -175,7 +175,7 @@ new (class DagonKillStealer {
 		for (const enemy of heroes) {
 			if (!enemy.IsEnemy(hero)) continue
 			if (!enemy.IsAlive || !enemy.IsVisible || enemy.IsIllusion) continue
-			if (hero.Distance2D(enemy) > range + 100) continue
+			if (!isInCastRange(hero, enemy, range + 100)) continue
 			result.push(enemy)
 		}
 		return result

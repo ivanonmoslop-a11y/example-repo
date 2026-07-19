@@ -1,4 +1,4 @@
-import { Color, ImageData, Menu } from "github.com/octarine-public/wrapper/index"
+import { ImageData, Menu } from "github.com/octarine-public/wrapper/index"
 
 export class MenuManager {
 	private readonly base = Menu.AddEntry("Utility")
@@ -10,7 +10,7 @@ export class MenuManager {
 	public readonly PingSpam: Menu.Toggle
 	public readonly MinimapPaint: Menu.Toggle
 	public readonly MinimapPaintStep: Menu.Slider
-	public readonly MinimapPaintColor: Menu.ColorPicker
+	public readonly MinimapPaintBatch: Menu.Slider
 	public readonly MinimapPaintKey: Menu.KeyBind
 	public readonly RightClickSpam: Menu.Toggle
 	public readonly BodyBlock: Menu.Toggle
@@ -32,20 +32,23 @@ export class MenuManager {
 		this.MinimapPaint = paintNode.AddToggle(
 			"State",
 			false,
-			"Заливка миникарты — перекрывает радар союзникам"
+			"Заливка миникарты пингами — видят все союзники"
 		)
 		this.MinimapPaintStep = paintNode.AddSlider(
-			"Плотность (шаг линий)",
-			4,
+			"Шаг сетки (×100 юнитов)",
+			5,
 			1,
 			20,
 			0,
-			"Меньше = плотнее заливка, больше = видны полосы"
+			"Меньше = плотнее, больше нагрузка на сервер"
 		)
-		this.MinimapPaintColor = paintNode.AddColorPicker(
-			"Цвет заливки",
-			new Color(0, 0, 0),
-			"Чёрный = туман войны, красный/зелёный = раздражение"
+		this.MinimapPaintBatch = paintNode.AddSlider(
+			"Строк за тик",
+			3,
+			1,
+			10,
+			0,
+			"Сколько горизонтальных линий пингов за один тик"
 		)
 		this.MinimapPaintKey = paintNode.AddKeybind(
 			"Кнопка вкл/выкл",

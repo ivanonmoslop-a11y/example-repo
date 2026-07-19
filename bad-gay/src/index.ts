@@ -9,14 +9,12 @@ import {
 	ExecuteOrder,
 	GameRules,
 	GameState,
-	GUIInfo,
 	Hero,
 	InputManager,
 	item_dust,
 	LocalPlayer,
 	MinimapSDK,
 	PingType,
-	RendererSDK,
 	Unit,
 	Vector2,
 	VMouseKeys
@@ -28,10 +26,10 @@ new (class BadGay {
 	private readonly menu = new MenuManager()
 	private dustItemID: number = 0
 	private minimapActive = false
+	private paintRowIndex = 0
 
 	constructor() {
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
-		EventsSDK.on("Draw2D", this.Draw2D.bind(this))
 		EventsSDK.on("GameStarted", this.GameStarted.bind(this))
 		this.menu.MinimapPaintKey.OnRelease(() => {
 			this.minimapActive = !this.minimapActive
@@ -55,6 +53,7 @@ new (class BadGay {
 	private GameStarted(): void {
 		this.dustItemID = 0
 		this.minimapActive = false
+		this.paintRowIndex = 0
 	}
 
 	private PostDataUpdate(): void {
@@ -82,18 +81,11 @@ new (class BadGay {
 		if (this.menu.BodyBlock.value && hero.IsAlive) {
 			this.doBodyBlock(hero)
 		}
-	}
 
-	private Draw2D(): void {
-		if (!this.menu.State.value || !this.InGame) {
-			return
+		const paintOn = this.menu.MinimapPaint.value || this.minimapActive
+		if (paintOn) {
+			this.doMinimapPaint()
 		}
-		const paintEnabled =
-			this.menu.MinimapPaint.value || this.minimapActive
-		if (!paintEnabled) {
-			return
-		}
-		this.doMinimapPaint()
 	}
 
 	private isNearShop(hero: Unit): boolean {
@@ -139,14 +131,27 @@ new (class BadGay {
 	}
 
 	private doMinimapPaint(): void {
-		const mmRect = GUIInfo.Minimap.MinimapRenderBounds
-		const color = this.menu.MinimapPaintColor.SelectedColor.Clone()
-		const step = this.menu.MinimapPaintStep.value
+		const bounds = MinimapSDK.MinimapBounds
+		if (bounds.IsZero()) {
+			return
+		}
+		const step = this.menu.MinimapPaintStep.value * 100
+		const rowsPerTick = this.menu.MinimapPaintBatch.value
+		const minX = bounds.Left
+		const maxX = bounds.Right
+		const minY = bounds.Top
+		const maxY = bounds.Bottom
+		const totalRows = Math.ceil((maxY - minY) / step)
 
-		for (let y = 0; y < mmRect.Height; y += step) {
-			const linePos = new Vector2(mmRect.x, mmRect.y + y)
-			const lineSize = new Vector2(mmRect.Width, step)
-			RendererSDK.FilledRect(linePos, lineSize, color)
+		for (let r = 0; r < rowsPerTick; r++) {
+			if (this.paintRowIndex >= totalRows) {
+				this.paintRowIndex = 0
+			}
+			const y = minY + this.paintRowIndex * step
+			for (let x = minX; x <= maxX; x += step) {
+				MinimapSDK.SendPing(new Vector2(x, y), PingType.NORMAL, false)
+			}
+			this.paintRowIndex++
 		}
 	}
 

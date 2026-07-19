@@ -8,6 +8,9 @@ export class MenuManager {
 	public readonly State: Menu.Toggle
 	public readonly DustAbuse: Menu.Toggle
 	public readonly PingSpam: Menu.Toggle
+	public readonly MinimapPaint: Menu.Toggle
+	public readonly RightClickSpam: Menu.Toggle
+	public readonly BodyBlock: Menu.Toggle
 
 	constructor() {
 		this.State = this.tree.AddToggle("State", true, "Главный переключатель скрипта")
@@ -19,7 +22,22 @@ export class MenuManager {
 		this.PingSpam = this.tree.AddToggle(
 			"Ping Spam",
 			false,
-			"Спам пингов по позициям тиммейтов"
+			"Спам пингов по позициям тиммейтов (все сразу)"
+		)
+		this.MinimapPaint = this.tree.AddToggle(
+			"Minimap Paint",
+			false,
+			"Моментально закрасить всю карту рисованием"
+		)
+		this.RightClickSpam = this.tree.AddToggle(
+			"RMB Spam",
+			false,
+			"Автоповтор ПКМ — быстрое перекликивание любого игрока"
+		)
+		this.BodyBlock = this.tree.AddToggle(
+			"Body Block",
+			false,
+			"Блокировка героев — идти в хитбокс ближайшего союзника"
 		)
 	}
 }

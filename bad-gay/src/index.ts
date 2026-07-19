@@ -3,17 +3,21 @@ import {
 	DOTA_SHOP_TYPE,
 	DOTAGameState,
 	DOTAGameUIState,
+	dotaunitorder_t,
 	EntityManager,
 	EventsSDK,
+	ExecuteOrder,
 	GameRules,
 	GameState,
 	Hero,
+	InputManager,
 	item_dust,
 	LocalPlayer,
 	MinimapSDK,
 	PingType,
 	Unit,
-	Vector2
+	Vector2,
+	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
 import { MenuManager } from "./menu"
@@ -21,15 +25,13 @@ import { MenuManager } from "./menu"
 new (class BadGay {
 	private readonly menu = new MenuManager()
 	private dustItemID: number = 0
-	private pingIndex: number = 0
+	private paintDone = false
 
 	constructor() {
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
 		EventsSDK.on("GameStarted", this.GameStarted.bind(this))
 	}
 
-	// Pre-game counts: the fountain shop is already open before the horn, so the
-	// dust abuse has to work there too — not only once the clock starts.
 	private get InGame(): boolean {
 		if (GameState.UIState !== DOTAGameUIState.DOTA_GAME_UI_DOTA_INGAME) {
 			return false
@@ -46,6 +48,7 @@ new (class BadGay {
 
 	private GameStarted(): void {
 		this.dustItemID = 0
+		this.paintDone = false
 	}
 
 	private PostDataUpdate(): void {
@@ -58,14 +61,24 @@ new (class BadGay {
 			return
 		}
 
-		// Death does not close the shop — a corpse at the fountain can still buy and
-		// sell, so the abuse keeps running through the respawn timer.
 		if (this.menu.DustAbuse.value && (!hero.IsAlive || this.isNearShop(hero))) {
 			this.doDustAbuse(hero)
 		}
 
 		if (this.menu.PingSpam.value && hero.IsAlive) {
 			this.doPingSpam(hero)
+		}
+
+		if (this.menu.MinimapPaint.value && hero.IsAlive) {
+			this.doMinimapPaint()
+		}
+
+		if (this.menu.RightClickSpam.value && hero.IsAlive) {
+			this.doRightClickSpam(hero)
+		}
+
+		if (this.menu.BodyBlock.value && hero.IsAlive) {
+			this.doBodyBlock(hero)
 		}
 	}
 
@@ -90,8 +103,6 @@ new (class BadGay {
 		hero.PurchaseItem(itemID)
 	}
 
-	// Resolved on demand rather than on GameStarted: in pre-game that event has not
-	// fired yet, and an ID of 0 would silently skip every purchase.
 	private get DustItemID(): number {
 		if (this.dustItemID === 0) {
 			this.dustItemID = AbilityData.globalStorage.get("item_dust")?.ID ?? 0
@@ -107,10 +118,82 @@ new (class BadGay {
 			return
 		}
 
-		this.pingIndex = this.pingIndex % allies.length
-		const target = allies[this.pingIndex]
-		const pos = Vector2.FromVector3(target.Position)
-		MinimapSDK.SendPing(pos, PingType.NORMAL, true, target)
-		this.pingIndex++
+		for (const ally of allies) {
+			const pos = Vector2.FromVector3(ally.Position)
+			MinimapSDK.SendPing(pos, PingType.NORMAL, true, ally)
+		}
+	}
+
+	private doMinimapPaint(): void {
+		if (this.paintDone) {
+			return
+		}
+		const step = 512
+		const minX = -8288
+		const minY = -8288
+		const maxX = 8288
+		const maxY = 8288
+
+		for (let x = minX; x <= maxX; x += step) {
+			for (let y = minY; y <= maxY; y += step) {
+				ExecuteOrder.CastRiverPaint(new Vector3(x, y, 0))
+			}
+		}
+		this.paintDone = true
+	}
+
+	private doRightClickSpam(hero: Unit): void {
+		const cursorWorld = InputManager.CursorOnWorld
+		const allHeroes = EntityManager.GetEntitiesByClass(Hero).filter(
+			h => h !== hero && h.IsAlive && h.IsValid
+		)
+		if (allHeroes.length === 0) {
+			return
+		}
+		let closest: Hero | undefined
+		let closestDist = Infinity
+		for (const h of allHeroes) {
+			const dist = h.Position.Distance(cursorWorld)
+			if (dist < closestDist) {
+				closestDist = dist
+				closest = h
+			}
+		}
+		if (closest === undefined || closestDist > 300) {
+			return
+		}
+		ExecuteOrder.PrepareOrder({
+			orderType: dotaunitorder_t.DOTA_UNIT_ORDER_ATTACK_TARGET,
+			issuers: [hero],
+			target: closest,
+			isPlayerInput: false
+		})
+	}
+
+	private doBodyBlock(hero: Unit): void {
+		const allies = EntityManager.GetEntitiesByClass(Hero).filter(
+			h => !h.IsEnemy(hero) && h !== hero && h.IsAlive && h.IsValid
+		)
+		if (allies.length === 0) {
+			return
+		}
+		let closest: Hero | undefined
+		let closestDist = Infinity
+		for (const ally of allies) {
+			const dist = hero.Position.Distance(ally.Position)
+			if (dist < closestDist) {
+				closestDist = dist
+				closest = ally
+			}
+		}
+		if (closest === undefined) {
+			return
+		}
+		const allyPos = closest.Position
+		const allyForward = closest.Forward.MultiplyScalar(
+			closest.HullRadius + hero.HullRadius
+		)
+		const blockPos = allyPos.Add(allyForward)
+		hero.MoveTo(blockPos)
 	}
 })()

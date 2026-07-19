@@ -15,7 +15,9 @@ import {
 } from "github.com/octarine-public/wrapper/index"
 
 const TRIGGER_RADIUS = 1000
-const AMBUSH_RADIUS = 800
+// Shortest hop worth reacting to. Blink dagger lands 1200 away; gap closers with a
+// travel animation still cover several hundred units in one tick.
+const BLINK_MIN_DISTANCE = 350
 const APPROACH_MIN = 200
 const MAX_WALK_SPEED = 650
 const WALK_MARGIN = 120
@@ -67,7 +69,6 @@ interface EnemyTrack {
 
 export class BlinkEscape {
 	private enabled = true
-	private seeded = false
 	private pendingUntil = 0
 	private selfBlinkUntil = 0
 	private prevOwnCooldown = 0
@@ -120,7 +121,6 @@ export class BlinkEscape {
 	}
 
 	public Reset(): void {
-		this.seeded = false
 		this.pendingUntil = 0
 		this.selfBlinkUntil = 0
 		this.prevOwnCooldown = 0
@@ -149,7 +149,7 @@ export class BlinkEscape {
 	private WatchEnemies(hero: Hero): void {
 		const now = GameState.RawGameTime
 		const heroPos = hero.Position
-		const active = this.seeded && this.enabled && hero.IsAlive
+		const active = this.enabled && hero.IsAlive
 		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
 			if (!enemy.IsValid || !enemy.IsEnemy(hero) || enemy.IsIllusion) {
 				continue
@@ -170,7 +170,6 @@ export class BlinkEscape {
 				this.Trigger(reason)
 			}
 		}
-		this.seeded = true
 	}
 
 	private Track(index: number, track: Nullable<EnemyTrack>, cur: Vector3, now: number): void {
@@ -184,6 +183,9 @@ export class BlinkEscape {
 		track.time = now
 	}
 
+	// Only a blink counts. An enemy merely walking out of the fog, or standing next to
+	// us when we first see him, is not a jump — the old "new"/"fog" reasons burned the
+	// dagger on every laner who stepped into the trees.
 	private ThreatReason(
 		enemy: Hero,
 		track: Nullable<EnemyTrack>,
@@ -192,18 +194,18 @@ export class BlinkEscape {
 		now: number
 	): Nullable<string> {
 		if (track === undefined) {
-			return "new"
+			return undefined
 		}
 		const closed = track.pos.Distance2D(heroPos) - cur.Distance2D(heroPos)
 		if (closed < APPROACH_MIN) {
 			return undefined
 		}
+		// Measured on actual displacement, not on ground closed toward us: a hero
+		// strafing sideways at full speed closes little but travels far, and only the
+		// travel distinguishes a teleport from a sprint.
 		const gap = now - track.time
-		if (gap > CONTINUOUS_GAP) {
-			if (cur.Distance2D(heroPos) <= AMBUSH_RADIUS) {
-				return "fog"
-			}
-		} else if (closed > gap * MAX_WALK_SPEED + WALK_MARGIN) {
+		const moved = track.pos.Distance2D(cur)
+		if (gap <= CONTINUOUS_GAP && moved >= BLINK_MIN_DISTANCE && moved > gap * MAX_WALK_SPEED + WALK_MARGIN) {
 			return "jump"
 		}
 		return this.JustUsedGapCloser(enemy, now) ? "cd" : undefined

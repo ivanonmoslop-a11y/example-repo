@@ -6,6 +6,7 @@ export class MenuManager {
 	private readonly tree = this.base.AddNode("Armlet Abuse", this.icon)
 
 	public readonly State: Menu.Toggle
+	public readonly ToggleKey: Menu.KeyBind
 	public readonly ThresholdMode: Menu.Dropdown
 	public readonly HPThreshold: Menu.Slider
 	public readonly ShowDebug: Menu.Toggle
@@ -15,6 +16,11 @@ export class MenuManager {
 
 	constructor() {
 		this.State = this.tree.AddToggle("State", true)
+		this.ToggleKey = this.tree.AddKeybind(
+			"Toggle Key",
+			"None",
+			"Включает/выключает абуз прямо в бою.\nПри выключении армлет возвращается\nв надетое состояние"
+		)
 		this.ThresholdMode = this.tree.AddDropdown(
 			"Threshold Mode",
 			["Auto (by ping)", "Manual HP"],

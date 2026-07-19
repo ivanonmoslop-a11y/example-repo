@@ -8,6 +8,7 @@ import {
 	GameState,
 	item_armlet,
 	LocalPlayer,
+	Menu,
 	Modifier,
 	RendererSDK,
 	TickSleeper,
@@ -41,11 +42,20 @@ new (class ArmletAbuse {
 	private debugText = ""
 
 	constructor() {
+		this.menu.ToggleKey.OnPressed(() => this.ToggleState())
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
 		EventsSDK.on("ModifierCreated", this.ModifierCreated.bind(this))
 		EventsSDK.on("UnitItemsChanged", this.UnitItemsChanged.bind(this))
 		EventsSDK.on("Draw", this.Draw.bind(this))
 		EventsSDK.on("GameEnded", this.GameEnded.bind(this))
+	}
+
+	// Flips the same switch the menu toggle owns, so the next PostDataUpdate runs
+	// Restore() and puts the armlet back on if the key was hit mid-burst.
+	private ToggleState(): void {
+		this.menu.State.value = !this.menu.State.value
+		this.menu.State.Update()
+		Menu.Base.SaveConfigASAP = true
 	}
 
 	private get Hero(): Nullable<Unit> {

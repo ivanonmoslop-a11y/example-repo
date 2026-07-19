@@ -5,12 +5,14 @@ import {
 	DOTAGameUIState,
 	dotaunitorder_t,
 	EntityManager,
+	Events,
 	EventsSDK,
 	ExecuteOrder,
 	GameRules,
 	GameState,
 	Hero,
 	InputManager,
+	InputMessage,
 	item_dust,
 	LocalPlayer,
 	MinimapSDK,
@@ -32,6 +34,7 @@ new (class BadGay {
 	private paintPoints: Vector2[] = []
 	private paintIndex = 0
 	private drawModeOn = false
+	private fakeMouseDown = false
 
 	constructor() {
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
@@ -65,6 +68,7 @@ new (class BadGay {
 		this.paintPoints = []
 		this.paintIndex = 0
 		this.drawModeOn = false
+		this.fakeMouseDown = false
 		this.paintSleeper.FullReset()
 	}
 
@@ -184,6 +188,10 @@ new (class BadGay {
 		}
 	}
 
+	private emitMouse(msg: InputMessage, x: number, y: number): void {
+		Events.emit("WndProc", true, msg, 0n, 0n, x, y)
+	}
+
 	private startDrawMode(): void {
 		if (!this.drawModeOn) {
 			GameState.ExecuteCommand("+dota_communicator_draw")
@@ -192,6 +200,14 @@ new (class BadGay {
 	}
 
 	private stopDrawMode(): void {
+		if (this.fakeMouseDown) {
+			this.emitMouse(
+				InputMessage.WM_LBUTTONUP,
+				CursorPosition[0],
+				CursorPosition[1]
+			)
+			this.fakeMouseDown = false
+		}
 		if (this.drawModeOn) {
 			GameState.ExecuteCommand("-dota_communicator_draw")
 			this.drawModeOn = false
@@ -220,12 +236,18 @@ new (class BadGay {
 		const screenPos = MinimapSDK.WorldToMinimap(
 			Vector3.FromVector2(worldPos)
 		)
-		CursorPosition[0] = Math.round(screenPos.x)
-		CursorPosition[1] = Math.round(screenPos.y)
-		InputManager.UpdateCursorOnScreen(
-			CursorPosition[0],
-			CursorPosition[1]
-		)
+		const sx = Math.round(screenPos.x)
+		const sy = Math.round(screenPos.y)
+
+		CursorPosition[0] = sx
+		CursorPosition[1] = sy
+
+		if (!this.fakeMouseDown) {
+			this.emitMouse(InputMessage.WM_LBUTTONDOWN, sx, sy)
+			this.fakeMouseDown = true
+		} else {
+			InputManager.UpdateCursorOnScreen(sx, sy)
+		}
 
 		this.paintIndex++
 		if (delay > 0) {

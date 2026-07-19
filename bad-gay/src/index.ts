@@ -18,7 +18,8 @@ import {
 	PingType,
 	RendererSDK,
 	Unit,
-	Vector2
+	Vector2,
+	VMouseKeys
 } from "github.com/octarine-public/wrapper/index"
 
 import { MenuManager } from "./menu"
@@ -150,29 +151,13 @@ new (class BadGay {
 	}
 
 	private doRightClickSpam(hero: Unit): void {
-		const cursorWorld = InputManager.CursorOnWorld
-		const allHeroes = EntityManager.GetEntitiesByClass(Hero).filter(
-			h => h !== hero && h.IsAlive && h.IsValid
-		)
-		if (allHeroes.length === 0) {
-			return
-		}
-		let closest: Hero | undefined
-		let closestDist = Infinity
-		for (const h of allHeroes) {
-			const dist = h.Position.Distance(cursorWorld)
-			if (dist < closestDist) {
-				closestDist = dist
-				closest = h
-			}
-		}
-		if (closest === undefined || closestDist > 300) {
+		if (!InputManager.IsMouseKeyDown(VMouseKeys.MK_RBUTTON)) {
 			return
 		}
 		ExecuteOrder.PrepareOrder({
-			orderType: dotaunitorder_t.DOTA_UNIT_ORDER_ATTACK_TARGET,
+			orderType: dotaunitorder_t.DOTA_UNIT_ORDER_MOVE_TO_POSITION,
 			issuers: [hero],
-			target: closest,
+			position: InputManager.CursorOnWorld,
 			isPlayerInput: false
 		})
 	}

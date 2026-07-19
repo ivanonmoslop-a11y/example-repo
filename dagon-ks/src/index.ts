@@ -21,7 +21,7 @@ import {
 	Vector2
 } from "github.com/octarine-public/wrapper/index"
 
-import { canDagonKill, canEbladeComboKill, getHeroPriority } from "./damage"
+import { canDagonKill, canEbladeComboKill, distanceBetween, getHeroPriority } from "./damage"
 import { MenuManager } from "./menu"
 
 interface KillTarget {
@@ -82,11 +82,12 @@ new (class DagonKillStealer {
 		const target = this.selectPriority(killable, hero)
 		this.currentTarget = target.unit
 
+		const dist = distanceBetween(hero, target.unit)
+
 		if (target.needsEblade && eblade !== undefined && eblade.CanBeCasted()) {
 			if (!target.unit.IsEthereal && !this.ebladeInFlight) {
-				if (!hero.IsInRange(target.unit, eblade.CastRange)) return
+				if (dist > eblade.CastRange) return
 				hero.CastTarget(eblade, target.unit, false, true)
-				const dist = hero.Distance2D(target.unit)
 				const speed = eblade.GetBaseSpeedForLevel(eblade.Level)
 				this.ebladeArrivalTime = GameState.RawGameTime + dist / speed + 0.05
 				this.ebladeInFlight = true
@@ -95,7 +96,7 @@ new (class DagonKillStealer {
 		}
 
 		if (!dagon.CanBeCasted()) return
-		if (!hero.IsInRange(target.unit, dagon.CastRange)) return
+		if (dist > dagon.CastRange) return
 		if (!canDagonKill(hero, dagon, target.unit)) return
 
 		hero.CastTarget(dagon, target.unit, false, true)
@@ -178,7 +179,7 @@ new (class DagonKillStealer {
 		for (const enemy of heroes) {
 			if (!enemy.IsEnemy(hero)) continue
 			if (!enemy.IsAlive || !enemy.IsVisible || enemy.IsIllusion) continue
-			if (!hero.IsInRange(enemy, range)) continue
+			if (distanceBetween(hero, enemy) > range) continue
 			result.push(enemy)
 		}
 		return result

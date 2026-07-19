@@ -5,6 +5,12 @@ export const enum CastMode {
 	NoTarget
 }
 
+export const enum DangerKind {
+	Projectile,
+	Cast,
+	AreaCast
+}
+
 export interface CounterDef {
 	readonly key: string
 	readonly isItem: boolean
@@ -12,6 +18,7 @@ export interface CounterDef {
 	readonly mode: CastMode
 	readonly vsProjectile: boolean
 	readonly vsCast: boolean
+	readonly vsArea: boolean
 }
 
 const ITEM_DEFS: CounterDef[] = [
@@ -21,7 +28,8 @@ const ITEM_DEFS: CounterDef[] = [
 		names: ["item_manta"],
 		mode: CastMode.NoTarget,
 		vsProjectile: true,
-		vsCast: false
+		vsCast: false,
+		vsArea: true
 	},
 	{
 		key: "eul",
@@ -29,7 +37,8 @@ const ITEM_DEFS: CounterDef[] = [
 		names: ["item_cyclone", "item_wind_waker"],
 		mode: CastMode.Self,
 		vsProjectile: true,
-		vsCast: true
+		vsCast: true,
+		vsArea: true
 	},
 	{
 		key: "lotus",
@@ -37,7 +46,8 @@ const ITEM_DEFS: CounterDef[] = [
 		names: ["item_lotus_orb"],
 		mode: CastMode.Self,
 		vsProjectile: true,
-		vsCast: true
+		vsCast: true,
+		vsArea: false
 	},
 	{
 		key: "glimmer",
@@ -45,7 +55,8 @@ const ITEM_DEFS: CounterDef[] = [
 		names: ["item_glimmer_cape"],
 		mode: CastMode.Self,
 		vsProjectile: true,
-		vsCast: true
+		vsCast: true,
+		vsArea: false
 	},
 	{
 		key: "bkb",
@@ -53,7 +64,8 @@ const ITEM_DEFS: CounterDef[] = [
 		names: ["item_black_king_bar"],
 		mode: CastMode.NoTarget,
 		vsProjectile: true,
-		vsCast: true
+		vsCast: true,
+		vsArea: true
 	}
 ]
 
@@ -64,7 +76,8 @@ const ABILITY_DEFS: CounterDef[] = [
 		names: ["puck_phase_shift"],
 		mode: CastMode.NoTarget,
 		vsProjectile: true,
-		vsCast: true
+		vsCast: true,
+		vsArea: true
 	},
 	{
 		key: "blade_fury",
@@ -72,7 +85,8 @@ const ABILITY_DEFS: CounterDef[] = [
 		names: ["juggernaut_blade_fury"],
 		mode: CastMode.NoTarget,
 		vsProjectile: true,
-		vsCast: true
+		vsCast: true,
+		vsArea: true
 	},
 	{
 		key: "rage",
@@ -80,7 +94,8 @@ const ABILITY_DEFS: CounterDef[] = [
 		names: ["life_stealer_rage"],
 		mode: CastMode.NoTarget,
 		vsProjectile: true,
-		vsCast: true
+		vsCast: true,
+		vsArea: true
 	},
 	{
 		key: "shadow_realm",
@@ -88,7 +103,8 @@ const ABILITY_DEFS: CounterDef[] = [
 		names: ["dark_willow_shadow_realm"],
 		mode: CastMode.NoTarget,
 		vsProjectile: true,
-		vsCast: true
+		vsCast: true,
+		vsArea: true
 	},
 	{
 		key: "aphotic_shield",
@@ -96,7 +112,8 @@ const ABILITY_DEFS: CounterDef[] = [
 		names: ["abaddon_aphotic_shield"],
 		mode: CastMode.Self,
 		vsProjectile: true,
-		vsCast: true
+		vsCast: true,
+		vsArea: false
 	}
 ]
 
@@ -120,8 +137,15 @@ export class CounterSlot {
 		return this.def.isItem ? ImageData.GetItemTexture(name) : ImageData.GetSpellTexture(name)
 	}
 
-	public Matches(isProjectile: boolean): boolean {
-		return isProjectile ? this.def.vsProjectile : this.def.vsCast
+	public Matches(kind: DangerKind): boolean {
+		switch (kind) {
+			case DangerKind.Projectile:
+				return this.def.vsProjectile
+			case DangerKind.AreaCast:
+				return this.def.vsArea
+			default:
+				return this.def.vsCast
+		}
 	}
 
 	public CanUse(hero: Hero): boolean {

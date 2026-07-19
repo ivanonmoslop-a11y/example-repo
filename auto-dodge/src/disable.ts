@@ -102,7 +102,7 @@ export class DisableSlot {
 	}
 
 	public get IsShown(): boolean {
-		return this.def.isItem || this.IsFound
+		return true
 	}
 
 	public get Texture(): string {

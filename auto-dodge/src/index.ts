@@ -17,7 +17,7 @@ import {
 	Unit
 } from "github.com/octarine-public/wrapper/index"
 
-import { CastMode, CounterSlot, CreateSlots } from "./counters"
+import { CastMode, CounterSlot, CreateSlots, DangerKind } from "./counters"
 import { AutoDisable, CreateDisableSlots, DISABLE_TRIGGER_AGE } from "./disable"
 import { BlinkEscape } from "./escape"
 import { MenuManager } from "./menu"
@@ -30,8 +30,23 @@ const CAST_RANGE_BUFFER = 250
 const FACING_ANGLE = 0.45
 const DODGE_SLEEP_MS = 600
 
+const AREA_SPELLS: ReadonlyMap<string, number> = new Map([
+	["magnataur_reverse_polarity", 410],
+	["enigma_black_hole", 420],
+	["faceless_void_chronosphere", 450],
+	["tidehunter_ravage", 1250],
+	["earthshaker_echo_slam", 600],
+	["sandking_epicenter", 600],
+	["puck_dream_coil", 600],
+	["axe_berserkers_call", 320],
+	["disruptor_static_storm", 450],
+	["winter_wyvern_winters_curse", 500],
+	["void_spirit_astral_step", 450],
+	["dark_seer_vacuum", 500]
+])
+
 interface Danger {
-	isProjectile: boolean
+	kind: DangerKind
 	name: string
 	timeLeft: number
 	window: number
@@ -138,7 +153,7 @@ new (class AutoDodge {
 			}
 			if (best === undefined || timeLeft < best.timeLeft) {
 				best = {
-					isProjectile: true,
+					kind: DangerKind.Projectile,
 					name: proj.Ability?.Name ?? "projectile",
 					timeLeft,
 					window: projWindow,
@@ -173,6 +188,23 @@ new (class AutoDodge {
 				if (abil === undefined || !abil.IsValid || !abil.IsInAbilityPhase) {
 					continue
 				}
+				const areaRadius = AREA_SPELLS.get(abil.Name)
+				if (areaRadius !== undefined) {
+					if (enemy.Distance2D(hero) > areaRadius + hero.HullRadius) {
+						continue
+					}
+					const areaElapsed = GameState.RawGameTime - abil.IsInAbilityPhaseChangeTime
+					const areaLeft = Math.max(abil.CastPoint - areaElapsed, 0)
+					if (best === undefined || areaLeft < best.timeLeft) {
+						best = {
+							kind: DangerKind.AreaCast,
+							name: abil.Name,
+							timeLeft: areaLeft,
+							window: castWindow
+						}
+					}
+					continue
+				}
 				if (
 					!abil.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_UNIT_TARGET) ||
 					!abil.HasTargetTeam(DOTA_UNIT_TARGET_TEAM.DOTA_UNIT_TARGET_TEAM_ENEMY) ||
@@ -190,7 +222,7 @@ new (class AutoDodge {
 				const timeLeft = Math.max(abil.CastPoint - elapsed, 0)
 				if (best === undefined || timeLeft < best.timeLeft) {
 					best = {
-						isProjectile: false,
+						kind: DangerKind.Cast,
 						name: abil.Name,
 						timeLeft,
 						window: castWindow
@@ -202,7 +234,7 @@ new (class AutoDodge {
 	}
 
 	private PickCounter(hero: Hero, danger: Danger): Nullable<CounterSlot> {
-		return this.slots.find(x => x.IsShown && x.Matches(danger.isProjectile) && x.CanUse(hero))
+		return this.slots.find(x => x.IsShown && x.Matches(danger.kind) && x.CanUse(hero))
 	}
 
 	private UseCounter(hero: Hero, slot: CounterSlot, danger: Danger): void {
@@ -235,7 +267,8 @@ new (class AutoDodge {
 		const cancel = this.panel.cancelAnimation ? "cancel:on" : "cancel:off"
 		let dangerText = "no danger"
 		if (danger !== undefined) {
-			const kind = danger.isProjectile ? "proj" : "cast"
+			const kind =
+				danger.kind === DangerKind.Projectile ? "proj" : danger.kind === DangerKind.AreaCast ? "area" : "cast"
 			dangerText = `${kind} ${danger.name} ${Math.round(danger.timeLeft * 1000)}ms`
 		}
 		const slot = danger !== undefined ? this.PickCounter(hero, danger) : undefined

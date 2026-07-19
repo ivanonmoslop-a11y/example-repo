@@ -84,6 +84,7 @@ new (class DagonKillStealer {
 
 		if (target.needsEblade && eblade !== undefined && eblade.CanBeCasted()) {
 			if (!target.unit.IsEthereal && !this.ebladeInFlight) {
+				if (!isInCastRange(hero, target.unit, eblade.CastRange)) return
 				hero.CastTarget(eblade, target.unit, false, true)
 				const dist = hero.Distance2D(target.unit)
 				const speed = eblade.GetBaseSpeedForLevel(eblade.Level)
@@ -93,11 +94,13 @@ new (class DagonKillStealer {
 			}
 		}
 
-		if (dagon.CanBeCasted() && canDagonKill(hero, dagon, target.unit)) {
-			hero.CastTarget(dagon, target.unit, false, true)
-			this.lastKillTime = GameState.RawGameTime
-			this.lastKillName = target.unit.Name.replace("npc_dota_hero_", "").replace(/_/g, " ")
-		}
+		if (!dagon.CanBeCasted()) return
+		if (!isInCastRange(hero, target.unit, dagon.CastRange)) return
+		if (!canDagonKill(hero, dagon, target.unit)) return
+
+		hero.CastTarget(dagon, target.unit, false, true)
+		this.lastKillTime = GameState.RawGameTime
+		this.lastKillName = target.unit.Name.replace("npc_dota_hero_", "").replace(/_/g, " ")
 	}
 
 	private Draw(): void {
@@ -175,7 +178,7 @@ new (class DagonKillStealer {
 		for (const enemy of heroes) {
 			if (!enemy.IsEnemy(hero)) continue
 			if (!enemy.IsAlive || !enemy.IsVisible || enemy.IsIllusion) continue
-			if (!isInCastRange(hero, enemy, range + 100)) continue
+			if (!isInCastRange(hero, enemy, range)) continue
 			result.push(enemy)
 		}
 		return result

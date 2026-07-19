@@ -111,7 +111,7 @@ export class CounterSlot {
 	}
 
 	public get IsShown(): boolean {
-		return this.def.isItem || this.IsFound
+		return this.IsFound
 	}
 
 	public get Texture(): string {

@@ -31,6 +31,8 @@ const OFF_BORDER = new Color(110, 110, 110)
 const MISSING_TINT = new Color(255, 255, 255, 90)
 const BUTTON_ON = new Color(34, 120, 62, 255)
 const BUTTON_OFF = new Color(70, 70, 70, 255)
+const DRAG_TINT = new Color(255, 255, 255, 190)
+const DRAG_THRESHOLD = 6
 
 interface PanelLayout {
 	panel: Rectangle
@@ -47,6 +49,13 @@ interface PanelLayout {
 	disableSlots: [DisableSlot, Rectangle][]
 }
 
+interface IconDrag {
+	counter?: CounterSlot
+	disable?: DisableSlot
+	texture: string
+	moved: boolean
+}
+
 export class DodgePanel {
 	public visible = true
 	public cancelAnimation = true
@@ -57,7 +66,9 @@ export class DodgePanel {
 
 	private readonly pos = new Vector2().Invalidate()
 	private readonly dragOffset = new Vector2()
+	private readonly iconDragStart = new Vector2()
 	private dragging = false
+	private iconDrag: Nullable<IconDrag>
 
 	constructor(
 		private readonly slots: CounterSlot[],
@@ -74,6 +85,7 @@ export class DodgePanel {
 
 	public Reset(): void {
 		this.dragging = false
+		this.iconDrag = undefined
 	}
 
 	public Draw(): void {
@@ -103,6 +115,30 @@ export class DodgePanel {
 		this.DrawSectionHeader(layout.disableHeader, "АВТОДИЗЕЙБЛ")
 		this.DrawButton(layout.disableButton, "Автодизейбл", this.autoDisable)
 		this.DrawDisableSlots(layout)
+		this.DrawDraggedIcon(layout)
+	}
+
+	private DrawDraggedIcon(layout: PanelLayout): void {
+		const drag = this.iconDrag
+		if (drag === undefined) {
+			return
+		}
+		const cursor = InputManager.CursorOnScreen
+		if (cursor.Distance(this.iconDragStart) > DRAG_THRESHOLD) {
+			drag.moved = true
+		}
+		RendererSDK.InvalidateDraw2D()
+		if (!drag.moved) {
+			return
+		}
+		const iconRect = layout.slots[0]?.[1] ?? layout.disableSlots[0]?.[1]
+		if (iconRect === undefined) {
+			return
+		}
+		const size = iconRect.pos2.Subtract(iconRect.pos1)
+		const at = cursor.Subtract(size.DivideScalar(2))
+		RendererSDK.Image(drag.texture, at, -1, size, DRAG_TINT)
+		RendererSDK.OutlinedRect(at, size, 2, TITLE_COLOR)
 	}
 
 	private DrawDisableSlots(layout: PanelLayout): void {
@@ -155,9 +191,7 @@ export class DodgePanel {
 
 	private GetLayout(): Nullable<PanelLayout> {
 		const shown = this.slots.filter(x => x.IsShown)
-		if (shown.length === 0) {
-			return undefined
-		}
+		const disableShown = this.disableSlots.filter(x => x.IsFound)
 
 		const pad = GUIInfo.ScaleHeight(PAD)
 		const icon = GUIInfo.ScaleHeight(ICON)
@@ -168,16 +202,17 @@ export class DodgePanel {
 
 		const counterW = pad + shown.length * (icon + pad)
 		const minMoveW = pad + MOVE_COLS_MIN * (moveIcon + pad)
-		const disableW = pad + this.disableSlots.length * (icon + pad)
+		const disableW = pad + disableShown.length * (icon + pad)
 		const width = Math.max(counterW, minMoveW, disableW)
 		const moveCols = Math.max(1, Math.floor((width - pad) / (moveIcon + pad)))
 		const moveRows = Math.ceil(this.moveSlots.length / moveCols)
+		const counterRowH = shown.length > 0 ? icon + pad : 0
+		const disableRowH = disableShown.length > 0 ? icon + pad : 0
 
 		const height =
 			headerH +
 			pad +
-			icon +
-			pad +
+			counterRowH +
 			2 * (buttonH + pad) +
 			sectionH +
 			pad +
@@ -187,8 +222,7 @@ export class DodgePanel {
 			pad +
 			buttonH +
 			pad +
-			icon +
-			pad
+			disableRowH
 
 		const size = new Vector2(width, height)
 		this.EnsurePos(size)
@@ -203,7 +237,7 @@ export class DodgePanel {
 			slots.push([slot, new Rectangle(new Vector2(slotX, y), new Vector2(slotX + icon, y + icon))])
 			slotX += icon + pad
 		}
-		y += icon + pad
+		y += counterRowH
 
 		const cancelButton = new Rectangle(new Vector2(p.x + pad, y), new Vector2(p.x + width - pad, y + buttonH))
 		y += buttonH + pad
@@ -239,7 +273,7 @@ export class DodgePanel {
 
 		const disableSlotRects: [DisableSlot, Rectangle][] = []
 		let disableX = p.x + pad
-		for (const slot of this.disableSlots) {
+		for (const slot of disableShown) {
 			disableSlotRects.push([
 				slot,
 				new Rectangle(new Vector2(disableX, y), new Vector2(disableX + icon, y + icon))
@@ -291,7 +325,8 @@ export class DodgePanel {
 		}
 		for (const [slot, rect] of layout.slots) {
 			if (rect.Contains(cursor)) {
-				slot.enabled = !slot.enabled
+				this.iconDrag = { counter: slot, texture: slot.Texture, moved: false }
+				cursor.CopyTo(this.iconDragStart)
 				return false
 			}
 		}
@@ -323,7 +358,8 @@ export class DodgePanel {
 		}
 		for (const [slot, rect] of layout.disableSlots) {
 			if (rect.Contains(cursor)) {
-				slot.enabled = !slot.enabled
+				this.iconDrag = { disable: slot, texture: slot.Texture, moved: false }
+				cursor.CopyTo(this.iconDragStart)
 				return false
 			}
 		}
@@ -331,10 +367,57 @@ export class DodgePanel {
 	}
 
 	private MouseKeyUp(key: VMouseKeys): boolean {
-		if (key !== VMouseKeys.MK_LBUTTON || !this.dragging) {
+		if (key !== VMouseKeys.MK_LBUTTON) {
+			return true
+		}
+		const drag = this.iconDrag
+		if (drag !== undefined) {
+			this.iconDrag = undefined
+			this.FinishIconDrag(drag)
+			return false
+		}
+		if (!this.dragging) {
 			return true
 		}
 		this.dragging = false
 		return false
+	}
+
+	private FinishIconDrag(drag: IconDrag): void {
+		const layout = this.GetLayout()
+		if (layout === undefined) {
+			return
+		}
+		if (!drag.moved) {
+			const slot = drag.counter ?? drag.disable
+			if (slot !== undefined) {
+				slot.enabled = !slot.enabled
+			}
+			return
+		}
+		const cursor = InputManager.CursorOnScreen
+		if (drag.counter !== undefined) {
+			const target = layout.slots.find(([, rect]) => rect.Contains(cursor))
+			if (target !== undefined) {
+				this.Reorder(this.slots, drag.counter, target[0])
+			}
+			return
+		}
+		if (drag.disable !== undefined) {
+			const target = layout.disableSlots.find(([, rect]) => rect.Contains(cursor))
+			if (target !== undefined) {
+				this.Reorder(this.disableSlots, drag.disable, target[0])
+			}
+		}
+	}
+
+	private Reorder<T>(list: T[], moved: T, before: T): void {
+		const from = list.indexOf(moved)
+		const to = list.indexOf(before)
+		if (from < 0 || to < 0 || from === to) {
+			return
+		}
+		list.splice(from, 1)
+		list.splice(to, 0, moved)
 	}
 }

@@ -6,7 +6,8 @@ const RANGE_BUFFER = 100
 
 const enum DisableMode {
 	Enemy,
-	Self
+	Self,
+	NoTarget
 }
 
 export interface DisableDef {
@@ -30,6 +31,7 @@ const DISABLE_DEFS: DisableDef[] = [
 		magic: true,
 		range: 550
 	},
+	{ key: "ghost", names: ["item_ghost"], mode: DisableMode.NoTarget, magic: false, range: 0 },
 	{ key: "glimmer", names: ["item_glimmer_cape"], mode: DisableMode.Self, magic: false, range: 800 }
 ]
 
@@ -57,7 +59,7 @@ export class DisableSlot {
 		if (hero.IsMuted) {
 			return false
 		}
-		if (this.def.mode === DisableMode.Self) {
+		if (this.def.mode !== DisableMode.Enemy) {
 			return true
 		}
 		if (this.def.magic && target.IsMagicImmune) {
@@ -124,7 +126,9 @@ export class AutoDisable {
 			this.status = "no-item"
 			return
 		}
-		if (slot.def.mode === DisableMode.Self) {
+		if (slot.def.mode === DisableMode.NoTarget) {
+			hero.CastNoTarget(abil)
+		} else if (slot.def.mode === DisableMode.Self) {
 			hero.CastTarget(abil, hero)
 		} else {
 			hero.CastTarget(abil, target)

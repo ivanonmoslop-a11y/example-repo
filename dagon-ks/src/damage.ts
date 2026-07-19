@@ -38,14 +38,19 @@ export function isLinkensBlocked(target: Unit): boolean {
 	return target.IsLinkensProtected || target.HasLinkenAtTime(0)
 }
 
-export function distanceBetween(a: Unit, b: Unit): number {
-	return a.Position.Distance2D(b.Position)
+/**
+ * True cast range check against a unit target. Uses the SDK's hull-aware
+ * IsInRange — the same distance + hull-radius formula the game engine uses
+ * to decide whether a unit-targeted ability fires on the spot or walks.
+ * `castRange` already includes Aether Lens / neutral / talent bonuses.
+ */
+export function inCastRange(hero: Unit, target: Unit, castRange: number): boolean {
+	return hero.IsInRange(target, castRange)
 }
 
 export function canDagonKill(hero: Unit, dagon: Item, target: Unit): boolean {
 	if (isImmune(target)) return false
 	if (isLinkensBlocked(target)) return false
-	if (distanceBetween(hero, target) > dagon.CastRange) return false
 	const damage = dagon.GetDamage(target)
 	return target.HP <= damage
 }
@@ -58,8 +63,6 @@ export function canEbladeComboKill(
 ): boolean {
 	if (isImmune(target)) return false
 	if (isLinkensBlocked(target)) return false
-	const maxRange = Math.min(eblade.CastRange, dagon.CastRange)
-	if (distanceBetween(hero, target) > maxRange) return false
 
 	const ebladeDmg = eblade.GetDamage(target)
 	let dagonDmg = dagon.GetDamage(target)

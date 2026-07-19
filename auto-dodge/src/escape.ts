@@ -28,6 +28,9 @@ const MIN_GAP_COOLDOWN = 5
 const CAST_FRESH = 0.35
 const REVEAL_WINDOW = 0.6
 const REVEAL_CD_SLACK = 1.5
+const BLINK_MARK_TTL = 2
+const BLINK_MARK_DIST = 450
+const BLINK_MARK_TIME = 0.75
 const ALLY_NEAR = 250
 const PENDING_TIME = 0.5
 const RETRIGGER_MS = 1000
@@ -77,6 +80,11 @@ interface RevealCandidate {
 	preFogTime: number
 }
 
+interface BlinkMark {
+	pos: Vector3
+	time: number
+}
+
 export class BlinkEscape {
 	private enabled = true
 	private pendingUntil = 0
@@ -87,6 +95,7 @@ export class BlinkEscape {
 	private readonly sleeper = new Sleeper()
 	private readonly tracks = new Map<number, EnemyTrack>()
 	private readonly reveals = new Map<number, RevealCandidate>()
+	private readonly marks: BlinkMark[] = []
 	private readonly consumed = new Set<number>()
 
 	constructor() {
@@ -141,6 +150,7 @@ export class BlinkEscape {
 		this.sleeper.FullReset()
 		this.tracks.clear()
 		this.reveals.clear()
+		this.marks.length = 0
 		this.consumed.clear()
 	}
 
@@ -234,23 +244,60 @@ export class BlinkEscape {
 		return this.JustUsedGapCloser(enemy, now) ? "cd" : undefined
 	}
 
-	// A fogged enemy's abilities are PVS-culled, so the cooldown proving a blink often
-	// lands a tick or two after the reveal — candidates stay alive for a few ticks
-	// instead of checking only the reveal tick.
+	// A fogged enemy's abilities are PVS-culled, so the proof of a blink (cooldown
+	// value, arrival particle) often lands a tick or two after the reveal — candidates
+	// stay alive for a few ticks instead of checking only the reveal tick.
 	private EvaluateReveals(hero: Hero): void {
 		const now = GameState.RawGameTime
+		while (this.marks.length > 0 && now - this.marks[0].time > BLINK_MARK_TTL) {
+			this.marks.shift()
+		}
 		for (const [index, cand] of this.reveals) {
 			if (now - cand.revealTime > REVEAL_WINDOW || !cand.enemy.IsValid || !cand.enemy.IsAlive) {
 				this.reveals.delete(index)
 				continue
 			}
-			if (!this.JustUsedGapCloserAt(cand.enemy, cand.revealTime)) {
+			const reason = this.RevealReason(cand)
+			if (reason === undefined) {
 				continue
 			}
 			this.reveals.delete(index)
 			if (this.IsApproachingReveal(cand, hero.Position)) {
-				this.Trigger("fog")
+				this.Trigger(reason)
 			}
+		}
+	}
+
+	private RevealReason(cand: RevealCandidate): Nullable<string> {
+		if (this.JustUsedGapCloserAt(cand.enemy, cand.revealTime)) {
+			return "fog-cd"
+		}
+		if (this.HasMarkNear(cand.revealPos, cand.revealTime)) {
+			return "fog-part"
+		}
+		if (cand.preFogPos === undefined) {
+			return undefined
+		}
+		// The walk allowance stays bounded: past APPROACH_INFO_TTL a fog gap excuses any
+		// distance and a blink becomes indistinguishable from walking client-side.
+		const gap = cand.revealTime - cand.preFogTime
+		const moved = cand.preFogPos.Distance2D(cand.revealPos)
+		if (gap <= APPROACH_INFO_TTL && moved >= BLINK_MIN_DISTANCE && moved > gap * MAX_WALK_SPEED + WALK_MARGIN) {
+			return "fog-move"
+		}
+		return undefined
+	}
+
+	private HasMarkNear(pos: Vector3, revealTime: number): boolean {
+		return this.marks.some(
+			x => Math.abs(x.time - revealTime) <= BLINK_MARK_TIME && x.pos.Distance2D(pos) <= BLINK_MARK_DIST
+		)
+	}
+
+	private RecordBlink(pos: Vector3): void {
+		this.marks.push({ pos: pos.Clone(), time: GameState.RawGameTime })
+		if (this.marks.length > 32) {
+			this.marks.shift()
 		}
 	}
 
@@ -314,6 +361,7 @@ export class BlinkEscape {
 		if (!pos.IsValid || pos.Distance2D(hero.Position) > TRIGGER_RADIUS) {
 			return
 		}
+		this.RecordBlink(pos)
 		if (unit instanceof Unit && !this.IsApproachingPos(unit.Index, pos, hero.Position)) {
 			return
 		}
@@ -343,13 +391,21 @@ export class BlinkEscape {
 		}
 		const source = particle.Source
 		if (source !== undefined) {
-			if (!source.IsEnemy(hero) || !this.IsApproachingPos(source.Index, cp, hero.Position)) {
+			if (!source.IsEnemy(hero)) {
+				return
+			}
+			this.RecordBlink(cp)
+			if (!this.IsApproachingPos(source.Index, cp, hero.Position)) {
 				return
 			}
 			this.Trigger("particle")
 			return
 		}
-		if (this.IsOwnBlink(cp, hero) || this.HasAllyNear(cp, hero)) {
+		if (this.IsOwnBlink(cp, hero)) {
+			return
+		}
+		this.RecordBlink(cp)
+		if (this.HasAllyNear(cp, hero)) {
 			return
 		}
 		this.Trigger("particle")
@@ -368,6 +424,7 @@ export class BlinkEscape {
 		if (pos.Distance2D(hero.Position) > TRIGGER_RADIUS) {
 			return
 		}
+		this.RecordBlink(pos)
 		if (attached instanceof Unit && !this.IsApproachingPos(attached.Index, pos, hero.Position)) {
 			return
 		}

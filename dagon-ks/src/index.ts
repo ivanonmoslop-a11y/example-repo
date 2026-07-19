@@ -21,7 +21,7 @@ import {
 	Vector2
 } from "github.com/octarine-public/wrapper/index"
 
-import { canDagonKill, canEbladeComboKill, getHeroPriority, isInCastRange } from "./damage"
+import { canDagonKill, canEbladeComboKill, getHeroPriority } from "./damage"
 import { MenuManager } from "./menu"
 
 interface KillTarget {
@@ -84,7 +84,7 @@ new (class DagonKillStealer {
 
 		if (target.needsEblade && eblade !== undefined && eblade.CanBeCasted()) {
 			if (!target.unit.IsEthereal && !this.ebladeInFlight) {
-				if (!isInCastRange(hero, target.unit, eblade.CastRange)) return
+				if (!hero.IsInRange(target.unit, eblade.CastRange)) return
 				hero.CastTarget(eblade, target.unit, false, true)
 				const dist = hero.Distance2D(target.unit)
 				const speed = eblade.GetBaseSpeedForLevel(eblade.Level)
@@ -95,7 +95,7 @@ new (class DagonKillStealer {
 		}
 
 		if (!dagon.CanBeCasted()) return
-		if (!isInCastRange(hero, target.unit, dagon.CastRange)) return
+		if (!hero.IsInRange(target.unit, dagon.CastRange)) return
 		if (!canDagonKill(hero, dagon, target.unit)) return
 
 		hero.CastTarget(dagon, target.unit, false, true)
@@ -178,7 +178,7 @@ new (class DagonKillStealer {
 		for (const enemy of heroes) {
 			if (!enemy.IsEnemy(hero)) continue
 			if (!enemy.IsAlive || !enemy.IsVisible || enemy.IsIllusion) continue
-			if (!isInCastRange(hero, enemy, range)) continue
+			if (!hero.IsInRange(enemy, range)) continue
 			result.push(enemy)
 		}
 		return result

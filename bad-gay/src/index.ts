@@ -15,6 +15,7 @@ import {
 	LocalPlayer,
 	MinimapSDK,
 	PingType,
+	Sleeper,
 	Unit,
 	Vector2,
 	VMouseKeys
@@ -24,9 +25,11 @@ import { MenuManager } from "./menu"
 
 new (class BadGay {
 	private readonly menu = new MenuManager()
+	private readonly paintSleeper = new Sleeper()
 	private dustItemID: number = 0
 	private minimapActive = false
-	private paintRowIndex = 0
+	private paintPoints: Vector2[] = []
+	private paintIndex = 0
 
 	constructor() {
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
@@ -53,7 +56,9 @@ new (class BadGay {
 	private GameStarted(): void {
 		this.dustItemID = 0
 		this.minimapActive = false
-		this.paintRowIndex = 0
+		this.paintPoints = []
+		this.paintIndex = 0
+		this.paintSleeper.FullReset()
 	}
 
 	private PostDataUpdate(): void {
@@ -130,29 +135,48 @@ new (class BadGay {
 		}
 	}
 
-	private doMinimapPaint(): void {
+	private buildPaintPath(): void {
 		const bounds = MinimapSDK.MinimapBounds
 		if (bounds.IsZero()) {
 			return
 		}
+		this.paintPoints = []
 		const step = this.menu.MinimapPaintStep.value * 100
-		const rowsPerTick = this.menu.MinimapPaintBatch.value
 		const minX = bounds.Left
 		const maxX = bounds.Right
 		const minY = bounds.Top
 		const maxY = bounds.Bottom
-		const totalRows = Math.ceil((maxY - minY) / step)
-
-		for (let r = 0; r < rowsPerTick; r++) {
-			if (this.paintRowIndex >= totalRows) {
-				this.paintRowIndex = 0
+		let leftToRight = true
+		for (let y = minY; y <= maxY; y += step) {
+			if (leftToRight) {
+				for (let x = minX; x <= maxX; x += step) {
+					this.paintPoints.push(new Vector2(x, y))
+				}
+			} else {
+				for (let x = maxX; x >= minX; x -= step) {
+					this.paintPoints.push(new Vector2(x, y))
+				}
 			}
-			const y = minY + this.paintRowIndex * step
-			for (let x = minX; x <= maxX; x += step) {
-				MinimapSDK.SendPing(new Vector2(x, y), PingType.NORMAL, false)
-			}
-			this.paintRowIndex++
+			leftToRight = !leftToRight
 		}
+	}
+
+	private doMinimapPaint(): void {
+		if (this.paintSleeper.Sleeping("paint")) {
+			return
+		}
+		if (this.paintPoints.length === 0) {
+			this.buildPaintPath()
+			if (this.paintPoints.length === 0) {
+				return
+			}
+		}
+		if (this.paintIndex >= this.paintPoints.length) {
+			this.paintIndex = 0
+		}
+		MinimapSDK.SendPing(this.paintPoints[this.paintIndex], PingType.NORMAL, false)
+		this.paintIndex++
+		this.paintSleeper.Sleep(this.menu.MinimapPaintSpeed.value, "paint")
 	}
 
 	private doRightClickSpam(hero: Unit): void {

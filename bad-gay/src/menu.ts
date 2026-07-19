@@ -10,7 +10,7 @@ export class MenuManager {
 	public readonly PingSpam: Menu.Toggle
 	public readonly MinimapPaint: Menu.Toggle
 	public readonly MinimapPaintStep: Menu.Slider
-	public readonly MinimapPaintBatch: Menu.Slider
+	public readonly MinimapPaintSpeed: Menu.Slider
 	public readonly MinimapPaintKey: Menu.KeyBind
 	public readonly RightClickSpam: Menu.Toggle
 	public readonly BodyBlock: Menu.Toggle
@@ -37,18 +37,18 @@ export class MenuManager {
 		this.MinimapPaintStep = paintNode.AddSlider(
 			"Шаг сетки (×100 юнитов)",
 			5,
-			1,
+			2,
 			20,
 			0,
-			"Меньше = плотнее, больше нагрузка на сервер"
+			"Расстояние между точками. Меньше = плотнее покрытие"
 		)
-		this.MinimapPaintBatch = paintNode.AddSlider(
-			"Строк за тик",
-			3,
-			1,
-			10,
+		this.MinimapPaintSpeed = paintNode.AddSlider(
+			"Задержка между точками (мс)",
+			80,
+			30,
+			500,
 			0,
-			"Сколько горизонтальных линий пингов за один тик"
+			"Меньше = быстрее рисует, но может кикнуть. 80-150 — безопасно"
 		)
 		this.MinimapPaintKey = paintNode.AddKeybind(
 			"Кнопка вкл/выкл",

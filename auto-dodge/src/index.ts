@@ -1,5 +1,6 @@
 import {
 	Ability,
+	AbilityData,
 	Color,
 	DOTA_ABILITY_BEHAVIOR,
 	DOTA_UNIT_TARGET_TEAM,
@@ -12,6 +13,7 @@ import {
 	Hero,
 	LocalPlayer,
 	Modifier,
+	NetworkedParticle,
 	ProjectileManager,
 	RendererSDK,
 	Sleeper,
@@ -31,9 +33,8 @@ import { DodgePanel } from "./panel"
 const CAST_RANGE_BUFFER = 250
 const FACING_ANGLE = 0.45
 const DODGE_SLEEP_MS = 600
-const LATE_WINDOW = 0.1
-const REACTION_SAFETY = 0.05
 const ZONE_CAP = 32
+const ZONE_MERGE_DIST = 200
 
 const enum AreaMode {
 	Caster,
@@ -49,6 +50,7 @@ interface AreaDef {
 	length?: number
 	delayKeys?: string[]
 	delay?: number
+	castProximity?: boolean
 }
 
 interface CastDef {
@@ -57,7 +59,7 @@ interface CastDef {
 }
 
 const CAST_SPELLS: ReadonlyMap<string, CastDef> = new Map([
-	["lina_laguna_blade", { delayKeys: ["damage_delay"], delay: 0.05 }],
+	["lina_laguna_blade", { delayKeys: ["damage_delay", "effect_delay", "delay"], delay: 0.25 }],
 	["zuus_lightning_bolt", { delayKeys: ["strike_delay", "delay"], delay: 0.35 }]
 ])
 
@@ -81,11 +83,11 @@ const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
 	[
 		"warlock_rain_of_chaos",
 		{
-			radius: 375,
-			mode: AreaMode.Line,
-			length: 1000,
-			delayKeys: ["impact_delay", "golem_spawn_delay", "delay"],
-			delay: 2
+			radius: 600,
+			mode: AreaMode.Delayed,
+			delayKeys: ["effect_delay", "impact_delay", "golem_spawn_delay", "delay"],
+			delay: 0.2,
+			castProximity: true
 		}
 	],
 	["pugna_nether_blast", { radius: 350, mode: AreaMode.Line, length: 700, delayKeys: ["delay"], delay: 0.4 }],
@@ -107,6 +109,7 @@ interface Danger {
 	kind: DangerKind
 	name: string
 	timeLeft: number
+	route: string
 	projID?: number
 }
 
@@ -121,12 +124,14 @@ new (class AutoDodge {
 	private readonly autoDisable = new AutoDisable(this.disableSlots)
 	private readonly sleeper = new Sleeper()
 	private readonly handled = new Set<number>()
-	private readonly zones: { name: string; pos: Vector3; radius: number; impact: number }[] = []
+	private readonly zones: { name: string; pos: Vector3; radius: number; impact: number; route: string }[] = []
 	private debugText = ""
 
 	constructor() {
 		this.menu.PanelKey.OnPressed(() => this.panel.Toggle())
 		EventsSDK.on("ModifierCreated", this.ModifierCreated.bind(this))
+		EventsSDK.on("ParticleCreated", this.OnParticle.bind(this))
+		EventsSDK.on("ParticleUpdated", this.OnParticle.bind(this))
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
 		EventsSDK.on("Draw", this.Draw.bind(this))
 		EventsSDK.on("GameEnded", this.GameEnded.bind(this))
@@ -167,9 +172,9 @@ new (class AutoDodge {
 		if (!hero.IsAlive) {
 			return
 		}
-		const danger = this.FindDanger(hero)
-		this.UpdateDebug(hero, danger)
-		if (danger === undefined) {
+		const dangers = this.FindDangers(hero)
+		this.UpdateDebug(hero, dangers)
+		if (dangers.length === 0) {
 			return
 		}
 		if (this.sleeper.Sleeping("dodge")) {
@@ -178,15 +183,15 @@ new (class AutoDodge {
 		if (hero.IsStunned || hero.IsHexed || hero.IsInvulnerable) {
 			return
 		}
-		const slot = this.PickCounter(hero, danger)
-		if (slot === undefined) {
+		const picked = this.PickCounter(hero, dangers)
+		if (picked === undefined) {
 			return
 		}
-		this.UseCounter(hero, slot, danger)
+		this.UseCounter(hero, picked[0], picked[1])
 	}
 
-	private FindDanger(hero: Hero): Nullable<Danger> {
-		let best: Nullable<Danger>
+	private FindDangers(hero: Hero): Danger[] {
+		const found: Danger[] = []
 		const alive = new Set<number>()
 		const projs = ProjectileManager.AllTrackingProjectiles
 		for (const proj of projs) {
@@ -209,14 +214,13 @@ new (class AutoDodge {
 				const closing = proj.Speed + (hero.IsMoving ? hero.MoveSpeed : 0)
 				timeLeft = proj.Position.Distance(hero.Position) / Math.max(closing, 1)
 			}
-			if (best === undefined || timeLeft < best.timeLeft) {
-				best = {
-					kind: DangerKind.Projectile,
-					name: proj.Ability?.Name ?? "projectile",
-					timeLeft,
-					projID: proj.ID
-				}
-			}
+			found.push({
+				kind: DangerKind.Projectile,
+				name: proj.Ability?.Name ?? "projectile",
+				timeLeft,
+				route: "proj",
+				projID: proj.ID
+			})
 		}
 		for (const id of this.handled) {
 			if (!alive.has(id)) {
@@ -228,24 +232,15 @@ new (class AutoDodge {
 			if (!enemy.IsEnemy(hero) || !enemy.IsValid || !enemy.IsAlive || !enemy.IsVisible || enemy.IsIllusion) {
 				continue
 			}
-			const danger = this.CastDanger(enemy, hero)
-			if (danger !== undefined && (best === undefined || danger.timeLeft < best.timeLeft)) {
-				best = danger
-			}
+			this.CastDanger(enemy, hero, found)
 		}
-		const delayed = this.ThinkerDanger(hero)
-		if (delayed !== undefined && (best === undefined || delayed.timeLeft < best.timeLeft)) {
-			best = delayed
-		}
-		const zone = this.ZoneDanger(hero)
-		if (zone !== undefined && (best === undefined || zone.timeLeft < best.timeLeft)) {
-			best = zone
-		}
-		return best
+		this.ThinkerDanger(hero, found)
+		this.ZoneDanger(hero, found)
+		found.sort((a, b) => a.timeLeft - b.timeLeft)
+		return found
 	}
 
-	private CastDanger(enemy: Hero, hero: Hero): Nullable<Danger> {
-		let best: Nullable<Danger>
+	private CastDanger(enemy: Hero, hero: Hero, found: Danger[]): void {
 		const lists: Nullable<Ability>[][] = [enemy.Spells, enemy.Items]
 		for (const list of lists) {
 			for (const abil of list) {
@@ -255,16 +250,29 @@ new (class AutoDodge {
 				const castLeft = Math.max(abil.CastPoint - (GameState.RawGameTime - abil.IsInAbilityPhaseChangeTime), 0)
 				const area = AREA_SPELLS.get(abil.Name)
 				if (area !== undefined) {
-					if (area.mode === AreaMode.Delayed || !this.InArea(enemy, hero, area)) {
+					const proximity = area.mode === AreaMode.Delayed && area.castProximity === true
+					if (proximity) {
+						if (enemy.Distance2D(hero) > area.radius + hero.HullRadius) {
+							continue
+						}
+					} else if (area.mode === AreaMode.Delayed || !this.InArea(enemy, hero, area)) {
 						continue
 					}
-					const areaLeft = castLeft + this.ResolveDelay(abil, area.delayKeys, area.delay)
-					if (best === undefined || areaLeft < best.timeLeft) {
-						best = {
-							kind: DangerKind.AreaCast,
-							name: abil.Name,
-							timeLeft: areaLeft
-						}
+					const areaLeft = castLeft + this.ResolveDelay(abil, abil.Name, area.delayKeys, area.delay)
+					found.push({
+						kind: DangerKind.AreaCast,
+						name: abil.Name,
+						timeLeft: areaLeft,
+						route: proximity ? "cast~" : "cast"
+					})
+					if (area.mode === AreaMode.Line || proximity) {
+						this.AddZone(
+							abil.Name,
+							hero.Position.Clone(),
+							area.radius,
+							GameState.RawGameTime + areaLeft,
+							proximity ? "cast~" : "line"
+						)
 					}
 					continue
 				}
@@ -283,23 +291,37 @@ new (class AutoDodge {
 				if (enemy.FindRotationAngle(hero) > FACING_ANGLE) {
 					continue
 				}
-				const timeLeft = castLeft + this.ResolveDelay(abil, known?.delayKeys, known?.delay)
-				if (best === undefined || timeLeft < best.timeLeft) {
-					best = {
-						kind: DangerKind.Cast,
-						name: abil.Name,
-						timeLeft
-					}
+				found.push({
+					kind: DangerKind.Cast,
+					name: abil.Name,
+					timeLeft: castLeft + this.ResolveDelay(abil, abil.Name, known?.delayKeys, known?.delay),
+					route: "cast"
+				})
+			}
+		}
+	}
+
+	private ResolveDelay(
+		abil: Nullable<Ability>,
+		name: string,
+		keys: Nullable<string[]>,
+		fallback: Nullable<number>
+	): number {
+		if (keys === undefined) {
+			return fallback ?? 0
+		}
+		if (abil !== undefined && abil.IsValid) {
+			for (const key of keys) {
+				const value = abil.GetSpecialValue(key)
+				if (value > 0) {
+					return value
 				}
 			}
 		}
-		return best
-	}
-
-	private ResolveDelay(abil: Nullable<Ability>, keys: Nullable<string[]>, fallback: Nullable<number>): number {
-		if (abil !== undefined && abil.IsValid && keys !== undefined) {
+		const data = AbilityData.GetAbilityByName(name)
+		if (data !== undefined) {
 			for (const key of keys) {
-				const value = abil.GetSpecialValue(key)
+				const value = data.GetSpecialValue(key, 1, name)
 				if (value > 0) {
 					return value
 				}
@@ -353,21 +375,60 @@ new (class AutoDodge {
 		if (caster instanceof Unit && !caster.IsEnemy()) {
 			return
 		}
-		const delay = this.ResolveDelay(buff.Ability, area.delayKeys, area.delay)
-		this.zones.push({
-			name: abilName,
-			pos: parent.Position.Clone(),
-			radius: Math.max(area.radius, buff.Ability?.AOERadius ?? 0),
-			impact: GameState.RawGameTime + delay
-		})
+		const delay = this.ResolveDelay(buff.Ability, abilName, area.delayKeys, area.delay)
+		this.AddZone(
+			abilName,
+			parent.Position.Clone(),
+			Math.max(area.radius, buff.Ability?.AOERadius ?? 0),
+			GameState.RawGameTime + delay,
+			"mod"
+		)
+	}
+
+	private OnParticle(particle: NetworkedParticle): void {
+		const abilName = particle.Ability?.Name
+		if (abilName === undefined) {
+			return
+		}
+		const area = AREA_SPELLS.get(abilName)
+		if (area === undefined || area.mode !== AreaMode.Delayed) {
+			return
+		}
+		const source = particle.Source ?? particle.AttachedTo
+		if (source instanceof Unit && !source.IsEnemy()) {
+			return
+		}
+		const pos = this.ControlPoint(particle, 0)
+		if (pos === undefined) {
+			return
+		}
+		const delay = this.ResolveDelay(undefined, abilName, area.delayKeys, area.delay)
+		this.AddZone(abilName, pos.Clone(), area.radius, GameState.RawGameTime + delay, "part")
+	}
+
+	private ControlPoint(particle: NetworkedParticle, index: number): Nullable<Vector3> {
+		const cp = particle.ControlPoints.get(index)
+		if (cp !== undefined && cp.IsValid) {
+			return cp
+		}
+		const fallback = particle.ControlPointsFallback.get(index)
+		return fallback !== undefined && fallback.IsValid ? fallback : undefined
+	}
+
+	private AddZone(name: string, pos: Vector3, radius: number, impact: number, route: string): void {
+		const known = this.zones.find(x => x.name === name && x.pos.Distance2D(pos) < ZONE_MERGE_DIST)
+		if (known !== undefined) {
+			known.impact = Math.min(known.impact, impact)
+			return
+		}
+		this.zones.push({ name, pos, radius, impact, route })
 		if (this.zones.length > ZONE_CAP) {
 			this.zones.shift()
 		}
 	}
 
-	private ZoneDanger(hero: Hero): Nullable<Danger> {
+	private ZoneDanger(hero: Hero, found: Danger[]): void {
 		const now = GameState.RawGameTime
-		let best: Nullable<Danger>
 		for (let i = this.zones.length - 1; i > -1; i--) {
 			const zone = this.zones[i]
 			if (now > zone.impact) {
@@ -377,17 +438,17 @@ new (class AutoDodge {
 			if (zone.pos.Distance2D(hero.Position) > zone.radius + hero.HullRadius) {
 				continue
 			}
-			const timeLeft = zone.impact - now
-			if (best === undefined || timeLeft < best.timeLeft) {
-				best = { kind: DangerKind.AreaCast, name: zone.name, timeLeft }
-			}
+			found.push({
+				kind: DangerKind.AreaCast,
+				name: zone.name,
+				timeLeft: zone.impact - now,
+				route: zone.route
+			})
 		}
-		return best
 	}
 
-	private ThinkerDanger(hero: Hero): Nullable<Danger> {
+	private ThinkerDanger(hero: Hero, found: Danger[]): void {
 		const now = GameState.RawGameTime
-		let best: Nullable<Danger>
 		for (const thinker of EntityManager.GetEntitiesByClass(Thinker)) {
 			if (!thinker.IsValid || !thinker.IsAlive) {
 				continue
@@ -406,29 +467,29 @@ new (class AutoDodge {
 				if (thinker.Position.Distance2D(hero.Position) > radius + hero.HullRadius) {
 					continue
 				}
-				const delay = this.ResolveDelay(buff.Ability, area.delayKeys, area.delay)
+				const delay = this.ResolveDelay(buff.Ability, abilName, area.delayKeys, area.delay)
 				const impact = delay > 0 ? buff.CreationTime + delay : buff.DieTime
-				const timeLeft = Math.max(impact - now, 0)
-				if (best === undefined || timeLeft < best.timeLeft) {
-					best = {
-						kind: DangerKind.AreaCast,
-						name: abilName,
-						timeLeft
-					}
-				}
+				found.push({
+					kind: DangerKind.AreaCast,
+					name: abilName,
+					timeLeft: Math.max(impact - now, 0),
+					route: "think"
+				})
 			}
 		}
-		return best
 	}
 
-	private PickCounter(hero: Hero, danger: Danger): Nullable<CounterSlot> {
-		return this.slots.find(x => {
-			if (!x.IsShown || !x.Matches(danger.kind, danger.name) || !x.CanUse(hero)) {
-				return false
+	private PickCounter(hero: Hero, dangers: Danger[]): Nullable<[CounterSlot, Danger]> {
+		for (const slot of this.slots) {
+			if (!slot.IsShown || !slot.CanUse(hero)) {
+				continue
 			}
-			const slack = danger.timeLeft - (x.RequiredTime + GameState.InputLag + REACTION_SAFETY)
-			return slack > 0 && slack <= LATE_WINDOW
-		})
+			const danger = dangers.find(x => slot.Matches(x.kind, x.name) && slot.Covers(x.timeLeft))
+			if (danger !== undefined) {
+				return [slot, danger]
+			}
+		}
+		return undefined
 	}
 
 	private UseCounter(hero: Hero, slot: CounterSlot, danger: Danger): void {
@@ -453,25 +514,33 @@ new (class AutoDodge {
 		}
 	}
 
-	private UpdateDebug(hero: Hero, danger: Nullable<Danger>): void {
+	private UpdateDebug(hero: Hero, dangers: Danger[]): void {
 		if (!this.menu.ShowDebug.value) {
 			return
 		}
 		const state = this.sleeper.Sleeping("dodge") ? "cd" : "watch"
 		const cancel = this.panel.cancelAnimation ? "cancel:on" : "cancel:off"
+		const danger = dangers[0]
 		let dangerText = "no danger"
 		if (danger !== undefined) {
 			const kind =
 				danger.kind === DangerKind.Projectile ? "proj" : danger.kind === DangerKind.AreaCast ? "area" : "cast"
-			dangerText = `${kind} ${danger.name} ${Math.round(danger.timeLeft * 1000)}ms`
+			dangerText = `${kind}/${danger.route} ${danger.name} ${Math.round(danger.timeLeft * 1000)}ms`
+			if (dangers.length > 1) {
+				dangerText += ` +${dangers.length - 1}`
+			}
 		}
-		const slot = danger !== undefined ? this.PickCounter(hero, danger) : undefined
-		let counter = slot !== undefined ? slot.def.key : "none"
-		if (slot === undefined && danger !== undefined) {
-			const ready = this.slots.find(x => x.IsShown && x.Matches(danger.kind, danger.name) && x.CanUse(hero))
+		const picked = this.PickCounter(hero, dangers)
+		let counter = picked !== undefined ? picked[0].def.key : "none"
+		if (picked === undefined && danger !== undefined) {
+			const ready = this.slots.find(
+				x => x.IsShown && x.CanUse(hero) && dangers.some(d => x.Matches(d.kind, d.name))
+			)
 			if (ready !== undefined) {
-				const slack = danger.timeLeft - (ready.RequiredTime + GameState.InputLag + REACTION_SAFETY)
-				counter = `${ready.def.key} slack${Math.round(slack * 1000)}`
+				const want = dangers.find(d => ready.Matches(d.kind, d.name))
+				counter =
+					`${ready.def.key} want${Math.round((want?.timeLeft ?? 0) * 1000)} ` +
+					`win[${Math.round(ready.GuardStart * 1000)}..${Math.round(ready.GuardEnd * 1000)}]`
 			}
 		}
 		this.debugText = `${state} | ${dangerText} | ${counter} | ${cancel} | ${this.escape.Status} | ${this.moveDodge.Status} | ${this.autoDisable.Status}`

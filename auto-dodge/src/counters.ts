@@ -1,4 +1,6 @@
-import { Ability, Hero, ImageData } from "github.com/octarine-public/wrapper/index"
+import { Ability, GameState, Hero, ImageData } from "github.com/octarine-public/wrapper/index"
+
+const GUARD_SAFETY = 0.02
 
 export const enum CastMode {
 	Self,
@@ -19,6 +21,8 @@ export interface CounterDef {
 	readonly vsProjectile: boolean
 	readonly vsCast: boolean
 	readonly vsArea: boolean
+	readonly activationDelay: number
+	readonly protection: number
 	readonly spells?: string[]
 }
 
@@ -50,6 +54,8 @@ const ITEM_DEFS: CounterDef[] = [
 		vsProjectile: true,
 		vsCast: true,
 		vsArea: true,
+		activationDelay: 0,
+		protection: 0.1,
 		spells: MANTA_SPELLS
 	},
 	{
@@ -59,7 +65,9 @@ const ITEM_DEFS: CounterDef[] = [
 		mode: CastMode.Self,
 		vsProjectile: true,
 		vsCast: true,
-		vsArea: true
+		vsArea: true,
+		activationDelay: 0,
+		protection: 2.5
 	},
 	{
 		key: "lotus",
@@ -68,7 +76,9 @@ const ITEM_DEFS: CounterDef[] = [
 		mode: CastMode.Self,
 		vsProjectile: true,
 		vsCast: true,
-		vsArea: false
+		vsArea: false,
+		activationDelay: 0,
+		protection: 5
 	},
 	{
 		key: "glimmer",
@@ -77,7 +87,9 @@ const ITEM_DEFS: CounterDef[] = [
 		mode: CastMode.Self,
 		vsProjectile: true,
 		vsCast: true,
-		vsArea: false
+		vsArea: false,
+		activationDelay: 0,
+		protection: 5
 	},
 	{
 		key: "bkb",
@@ -86,7 +98,9 @@ const ITEM_DEFS: CounterDef[] = [
 		mode: CastMode.NoTarget,
 		vsProjectile: true,
 		vsCast: true,
-		vsArea: true
+		vsArea: true,
+		activationDelay: 0,
+		protection: 5
 	}
 ]
 
@@ -98,7 +112,9 @@ const ABILITY_DEFS: CounterDef[] = [
 		mode: CastMode.NoTarget,
 		vsProjectile: true,
 		vsCast: true,
-		vsArea: true
+		vsArea: true,
+		activationDelay: 0,
+		protection: 3.25
 	},
 	{
 		key: "blade_fury",
@@ -107,7 +123,9 @@ const ABILITY_DEFS: CounterDef[] = [
 		mode: CastMode.NoTarget,
 		vsProjectile: true,
 		vsCast: true,
-		vsArea: true
+		vsArea: true,
+		activationDelay: 0,
+		protection: 5
 	},
 	{
 		key: "rage",
@@ -116,7 +134,9 @@ const ABILITY_DEFS: CounterDef[] = [
 		mode: CastMode.NoTarget,
 		vsProjectile: true,
 		vsCast: true,
-		vsArea: true
+		vsArea: true,
+		activationDelay: 0,
+		protection: 5
 	},
 	{
 		key: "shadow_realm",
@@ -125,7 +145,9 @@ const ABILITY_DEFS: CounterDef[] = [
 		mode: CastMode.NoTarget,
 		vsProjectile: true,
 		vsCast: true,
-		vsArea: true
+		vsArea: true,
+		activationDelay: 0,
+		protection: 4
 	},
 	{
 		key: "aphotic_shield",
@@ -134,7 +156,9 @@ const ABILITY_DEFS: CounterDef[] = [
 		mode: CastMode.Self,
 		vsProjectile: true,
 		vsCast: true,
-		vsArea: false
+		vsArea: false,
+		activationDelay: 0,
+		protection: 15
 	}
 ]
 
@@ -155,6 +179,18 @@ export class CounterSlot {
 	public get RequiredTime(): number {
 		const abil = this.ability
 		return abil !== undefined && abil.IsValid ? abil.CastPoint : 0
+	}
+
+	public get GuardStart(): number {
+		return this.RequiredTime + this.def.activationDelay + GameState.InputLag + GUARD_SAFETY
+	}
+
+	public get GuardEnd(): number {
+		return this.GuardStart + Math.max(this.def.protection - GUARD_SAFETY * 2, 0)
+	}
+
+	public Covers(timeLeft: number): boolean {
+		return timeLeft >= this.GuardStart && timeLeft <= this.GuardEnd
 	}
 
 	public get Texture(): string {

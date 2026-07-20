@@ -105,6 +105,15 @@ const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
 	["nevermore_shadowraze3", { radius: 250, mode: AreaMode.Raze, offset: 700 }]
 ])
 
+const AREA_PARTICLES: ReadonlyMap<string, string> = new Map([
+	["invoker_sun_strike", "invoker_sun_strike"],
+	["kunkka_spell_torrent", "kunkka_torrent"],
+	["bloodseeker_bloodritual", "bloodseeker_blood_bath"],
+	["blood_rite", "bloodseeker_blood_bath"],
+	["lina_spell_light_strike_array", "lina_light_strike_array"],
+	["warlock_rain_of_chaos", "warlock_rain_of_chaos"]
+])
+
 interface Danger {
 	kind: DangerKind
 	name: string
@@ -291,12 +300,17 @@ new (class AutoDodge {
 				if (enemy.FindRotationAngle(hero) > FACING_ANGLE) {
 					continue
 				}
+				const castDelay = this.ResolveDelay(abil, abil.Name, known?.delayKeys, known?.delay)
+				const totalLeft = castLeft + castDelay
 				found.push({
 					kind: DangerKind.Cast,
 					name: abil.Name,
-					timeLeft: castLeft + this.ResolveDelay(abil, abil.Name, known?.delayKeys, known?.delay),
+					timeLeft: totalLeft,
 					route: "cast"
 				})
+				if (known !== undefined && castDelay > 0) {
+					this.AddZone(abil.Name, hero.Position.Clone(), 200, GameState.RawGameTime + totalLeft, "cast")
+				}
 			}
 		}
 	}
@@ -386,7 +400,7 @@ new (class AutoDodge {
 	}
 
 	private OnParticle(particle: NetworkedParticle): void {
-		const abilName = particle.Ability?.Name
+		const abilName = particle.Ability?.Name ?? this.ResolveParticleArea(particle.PathNoEcon)
 		if (abilName === undefined) {
 			return
 		}
@@ -404,6 +418,18 @@ new (class AutoDodge {
 		}
 		const delay = this.ResolveDelay(undefined, abilName, area.delayKeys, area.delay)
 		this.AddZone(abilName, pos.Clone(), area.radius, GameState.RawGameTime + delay, "part")
+	}
+
+	private ResolveParticleArea(path: string): Nullable<string> {
+		if (path.length === 0) {
+			return undefined
+		}
+		for (const [needle, name] of AREA_PARTICLES) {
+			if (path.includes(needle)) {
+				return name
+			}
+		}
+		return undefined
 	}
 
 	private ControlPoint(particle: NetworkedParticle, index: number): Nullable<Vector3> {

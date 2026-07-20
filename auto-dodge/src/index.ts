@@ -11,12 +11,14 @@ import {
 	GameRules,
 	GameState,
 	Hero,
+	huskar_life_break,
 	LocalPlayer,
 	Modifier,
 	NetworkedParticle,
 	ProjectileManager,
 	RendererSDK,
 	Sleeper,
+	techies_suicide,
 	Thinker,
 	Unit,
 	Vector3
@@ -33,8 +35,13 @@ import { DodgePanel } from "./panel"
 const CAST_RANGE_BUFFER = 250
 const FACING_ANGLE = 0.45
 const DODGE_SLEEP_MS = 600
+const CAST_CONFIRM_GRACE = 0.2
 const ZONE_CAP = 32
 const ZONE_MERGE_DIST = 200
+const POWERSHOT_NAME = "windrunner_powershot"
+const POWERSHOT_PARTICLE = "windrunner_spell_powershot"
+const POWERSHOT_RADIUS = 125
+const MANTA_IMPACT_PROJECTILES = new Set(["alchemist_unstable_concoction_throw", "huskar_life_break"])
 
 const enum AreaMode {
 	Caster,
@@ -51,6 +58,8 @@ interface AreaDef {
 	delayKeys?: string[]
 	delay?: number
 	castProximity?: boolean
+	castDetection?: boolean
+	radiusKeys?: string[]
 }
 
 interface CastDef {
@@ -59,19 +68,24 @@ interface CastDef {
 }
 
 const CAST_SPELLS: ReadonlyMap<string, CastDef> = new Map([
+	["lion_finger_of_death", { delayKeys: ["damage_delay", "effect_delay", "delay"], delay: 0.25 }],
 	["lina_laguna_blade", { delayKeys: ["damage_delay", "effect_delay", "delay"], delay: 0.25 }],
 	["zuus_lightning_bolt", { delayKeys: ["strike_delay", "delay"], delay: 0.35 }]
 ])
 
 const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
-	["magnataur_reverse_polarity", { radius: 410, mode: AreaMode.Caster }],
+	["magnataur_reverse_polarity", { radius: 430, mode: AreaMode.Caster, radiusKeys: ["pull_radius", "push_radius"] }],
 	["enigma_black_hole", { radius: 420, mode: AreaMode.Caster }],
 	["faceless_void_chronosphere", { radius: 450, mode: AreaMode.Caster }],
 	["tidehunter_ravage", { radius: 1250, mode: AreaMode.Caster }],
 	["earthshaker_echo_slam", { radius: 600, mode: AreaMode.Caster }],
 	["sandking_epicenter", { radius: 600, mode: AreaMode.Caster }],
 	["puck_dream_coil", { radius: 600, mode: AreaMode.Caster }],
-	["axe_berserkers_call", { radius: 320, mode: AreaMode.Caster }],
+	["axe_berserkers_call", { radius: 315, mode: AreaMode.Caster }],
+	["centaur_hoof_stomp", { radius: 325, mode: AreaMode.Caster }],
+	["slardar_slithereen_crush", { radius: 325, mode: AreaMode.Caster }],
+	["monkey_king_boundless_strike", { radius: 150, mode: AreaMode.Line, length: 1100 }],
+	["obsidian_destroyer_sanity_eclipse", { radius: 500, mode: AreaMode.Delayed }],
 	["disruptor_static_storm", { radius: 450, mode: AreaMode.Caster }],
 	["winter_wyvern_winters_curse", { radius: 500, mode: AreaMode.Caster }],
 	["void_spirit_astral_step", { radius: 450, mode: AreaMode.Caster }],
@@ -79,7 +93,6 @@ const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
 	["pangolier_shield_crash", { radius: 400, mode: AreaMode.Caster }],
 	["meepo_poof", { radius: 400, mode: AreaMode.Caster }],
 	["roshan_slam", { radius: 400, mode: AreaMode.Caster }],
-	["dark_willow_terrorize", { radius: 600, mode: AreaMode.Caster }],
 	[
 		"warlock_rain_of_chaos",
 		{
@@ -96,8 +109,9 @@ const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
 		{ radius: 200, mode: AreaMode.Line, length: 1600, delayKeys: ["crack_time"], delay: 3.3 }
 	],
 	["invoker_sun_strike", { radius: 175, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 1.7 }],
+	["invoker_emp", { radius: 675, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 2.9, castDetection: false }],
 	["kunkka_torrent", { radius: 225, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 1.6 }],
-	["bloodseeker_blood_bath", { radius: 600, mode: AreaMode.Delayed, delay: 2.9 }],
+	["bloodseeker_blood_bath", { radius: 600, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 2.6 }],
 	["kunkka_ghostship", { radius: 425, mode: AreaMode.Delayed }],
 	["lina_light_strike_array", { radius: 225, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 0.5 }],
 	["nevermore_shadowraze1", { radius: 250, mode: AreaMode.Raze, offset: 200 }],
@@ -106,6 +120,7 @@ const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
 ])
 
 const AREA_PARTICLES: ReadonlyMap<string, string> = new Map([
+	["invoker_emp", "invoker_emp"],
 	["invoker_sun_strike", "invoker_sun_strike"],
 	["kunkka_spell_torrent", "kunkka_torrent"],
 	["bloodseeker_bloodritual", "bloodseeker_blood_bath"],
@@ -122,6 +137,13 @@ interface Danger {
 	projID?: number
 }
 
+interface PendingCast {
+	ability: Ability
+	startedAt: number
+	lastActiveAt: number
+	confirmed: boolean
+}
+
 new (class AutoDodge {
 	private readonly menu = new MenuManager()
 	private readonly slots = CreateSlots()
@@ -133,7 +155,15 @@ new (class AutoDodge {
 	private readonly autoDisable = new AutoDisable(this.disableSlots)
 	private readonly sleeper = new Sleeper()
 	private readonly handled = new Set<number>()
-	private readonly zones: { name: string; pos: Vector3; radius: number; impact: number; route: string }[] = []
+	private readonly pendingCasts = new Map<string, PendingCast>()
+	private readonly zones: {
+		name: string
+		pos: Vector3
+		radius: number
+		impact: number
+		route: string
+		predictedCast?: string
+	}[] = []
 	private debugText = ""
 
 	constructor() {
@@ -203,29 +233,33 @@ new (class AutoDodge {
 		const found: Danger[] = []
 		const alive = new Set<number>()
 		const projs = ProjectileManager.AllTrackingProjectiles
+		const lifeBreaks = EntityManager.GetEntitiesByClass(huskar_life_break)
 		for (const proj of projs) {
 			alive.add(proj.ID)
+			const lifeBreak = lifeBreaks.find(x => x.CurrentProjectile === proj)
+			const ability = proj.Ability ?? lifeBreak
+			const abilityName = ability?.Name ?? "projectile"
+			const impactDodge = MANTA_IMPACT_PROJECTILES.has(abilityName)
 			if (
 				proj.Target !== hero ||
 				proj.IsAttack ||
-				!proj.IsDodgeable ||
+				(!proj.IsDodgeable && !impactDodge) ||
 				proj.IsDodged ||
 				this.handled.has(proj.ID)
 			) {
 				continue
 			}
-			const source = proj.Source
+			const source = proj.Source ?? ability?.Owner
 			if (!(source instanceof Unit) || !source.IsEnemy(hero)) {
 				continue
 			}
 			let timeLeft = 0
 			if (proj.Position.IsValid) {
-				const closing = proj.Speed + (hero.IsMoving ? hero.MoveSpeed : 0)
-				timeLeft = proj.Position.Distance(hero.Position) / Math.max(closing, 1)
+				timeLeft = this.TrackingTimeLeft(proj.Position, proj.Speed || ability?.Speed || 1, hero)
 			}
 			found.push({
-				kind: DangerKind.Projectile,
-				name: proj.Ability?.Name ?? "projectile",
+				kind: !proj.IsDodgeable && impactDodge ? DangerKind.Cast : DangerKind.Projectile,
+				name: abilityName,
 				timeLeft,
 				route: "proj",
 				projID: proj.ID
@@ -236,6 +270,9 @@ new (class AutoDodge {
 				this.handled.delete(id)
 			}
 		}
+		this.PowershotDanger(hero, found)
+		this.BlastOffDanger(hero, found)
+		this.CentaurStompDanger(hero, found)
 		const enemies = EntityManager.GetEntitiesByClass(Hero)
 		for (const enemy of enemies) {
 			if (!enemy.IsEnemy(hero) || !enemy.IsValid || !enemy.IsAlive || !enemy.IsVisible || enemy.IsIllusion) {
@@ -249,6 +286,128 @@ new (class AutoDodge {
 		return found
 	}
 
+	private TrackingTimeLeft(position: Vector3, speed: number, hero: Hero): number {
+		const dx = hero.Position.x - position.x
+		const dy = hero.Position.y - position.y
+		const distance = Math.sqrt(dx * dx + dy * dy)
+		if (!hero.IsMoving || distance <= 1) {
+			return distance / Math.max(speed, 1)
+		}
+		const velocityX = Math.cos(hero.RotationRad) * hero.MoveSpeed
+		const velocityY = Math.sin(hero.RotationRad) * hero.MoveSpeed
+		const movingAway = (velocityX * dx + velocityY * dy) / distance
+		return distance / Math.max(speed - movingAway, 1)
+	}
+
+	private PowershotDanger(hero: Hero, found: Danger[]): void {
+		for (const proj of ProjectileManager.AllLinearProjectiles) {
+			if (!proj.IsValid || !proj.Position.IsValid) {
+				continue
+			}
+			const source = proj.Source
+			if (!(source instanceof Unit) || !source.IsEnemy(hero)) {
+				continue
+			}
+			const ability =
+				proj.Ability ??
+				(source instanceof Hero
+					? source.Spells.find((x): x is Ability => x !== undefined && x.Name === POWERSHOT_NAME)
+					: undefined)
+			if (ability?.Name !== POWERSHOT_NAME && !proj.ParticlePathNoEcon.includes(POWERSHOT_PARTICLE)) {
+				continue
+			}
+			const dx = hero.Position.x - proj.Position.x
+			const dy = hero.Position.y - proj.Position.y
+			const along = dx * proj.Forward.x + dy * proj.Forward.y
+			const radius = Math.max(ability?.AOERadius ?? 0, POWERSHOT_RADIUS) + hero.HullRadius
+			const remaining = Math.max(proj.Distance - proj.Position.Distance2D(proj.Origin), 0)
+			if (along < -hero.HullRadius || along > remaining + radius) {
+				continue
+			}
+			if (Math.abs(dx * proj.Forward.y - dy * proj.Forward.x) > radius) {
+				continue
+			}
+			found.push({
+				kind: DangerKind.AreaCast,
+				name: POWERSHOT_NAME,
+				timeLeft: Math.max(along, 0) / Math.max(proj.Speed, 1),
+				route: "linear"
+			})
+		}
+	}
+
+	private BlastOffDanger(hero: Hero, found: Danger[]): void {
+		for (const ability of EntityManager.GetEntitiesByClass(techies_suicide)) {
+			const owner = ability.Owner
+			if (
+				owner === undefined ||
+				!owner.IsValid ||
+				!owner.IsAlive ||
+				!owner.IsEnemy(hero) ||
+				!ability.TargetPosition.IsValid
+			) {
+				continue
+			}
+			const buff = owner.GetBuffByName("modifier_techies_suicide_leap")
+			if (buff === undefined) {
+				continue
+			}
+			const duration = ability.GetSpecialValue("duration") || 0.75
+			const timeLeft = buff.RemainingTime > 0 ? buff.RemainingTime : Math.max(duration - buff.ElapsedTime, 0)
+			this.AddTimedAreaDanger(
+				hero,
+				found,
+				ability.Name,
+				ability.TargetPosition,
+				Math.max(ability.AOERadius, 400),
+				timeLeft,
+				"blast-off"
+			)
+		}
+	}
+
+	private CentaurStompDanger(hero: Hero, found: Danger[]): void {
+		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
+			if (!enemy.IsValid || !enemy.IsAlive || !enemy.IsEnemy(hero)) {
+				continue
+			}
+			const buff = enemy.GetBuffByName("modifier_centaur_hoof_stomp_windup")
+			if (buff === undefined) {
+				continue
+			}
+			const ability =
+				buff.Ability ??
+				enemy.Spells.find((x): x is Ability => x !== undefined && x.Name === "centaur_hoof_stomp")
+			const windup = ability?.GetSpecialValue("windup_time") || 0.5
+			const timeLeft = buff.RemainingTime > 0 ? buff.RemainingTime : Math.max(windup - buff.ElapsedTime, 0)
+			this.AddTimedAreaDanger(
+				hero,
+				found,
+				"centaur_hoof_stomp",
+				enemy.Position,
+				Math.max(ability?.AOERadius ?? 0, 325),
+				timeLeft,
+				"windup"
+			)
+		}
+	}
+
+	private AddTimedAreaDanger(
+		hero: Hero,
+		found: Danger[],
+		name: string,
+		position: Vector3,
+		radius: number,
+		timeLeft: number,
+		route: string
+	): void {
+		this.AddZone(name, position.Clone(), radius, GameState.RawGameTime + timeLeft, route)
+		if (position.Distance2D(hero.Position) > radius + hero.HullRadius) {
+			return
+		}
+		found.push({ kind: DangerKind.AreaCast, name, timeLeft, route })
+	}
+
 	private CastDanger(enemy: Hero, hero: Hero, found: Danger[]): void {
 		const lists: Nullable<Ability>[][] = [enemy.Spells, enemy.Items]
 		for (const list of lists) {
@@ -256,19 +415,37 @@ new (class AutoDodge {
 				if (abil === undefined || !abil.IsValid || !abil.IsInAbilityPhase) {
 					continue
 				}
+				const castKey = `${enemy.Index}:${abil.Name}`
+				const startedAt = abil.IsInAbilityPhaseChangeTime
+				let pending = this.pendingCasts.get(castKey)
+				if (pending === undefined || pending.startedAt !== startedAt) {
+					pending = { ability: abil, startedAt, lastActiveAt: GameState.RawGameTime, confirmed: false }
+					this.pendingCasts.set(castKey, pending)
+				}
+				pending.lastActiveAt = GameState.RawGameTime
+				if (abil.CooldownChangeTime >= startedAt - 0.05 && abil.Cooldown > 0) {
+					pending.confirmed = true
+				}
 				const castLeft = Math.max(abil.CastPoint - (GameState.RawGameTime - abil.IsInAbilityPhaseChangeTime), 0)
 				const area = AREA_SPELLS.get(abil.Name)
 				if (area !== undefined) {
+					if (area.castDetection === false) {
+						continue
+					}
+					const keyedRadius = Math.max(0, ...(area.radiusKeys ?? []).map(x => abil.GetSpecialValue(x)))
+					const radius = Math.max(abil.AOERadius, keyedRadius, area.radius)
+					const resolvedArea = radius === area.radius ? area : { ...area, radius }
 					let detected = false
 					if (area.mode === AreaMode.Delayed) {
 						if (area.castProximity === true) {
-							detected = enemy.Distance2D(hero) <= area.radius + hero.HullRadius
+							detected = enemy.Distance2D(hero) <= radius + hero.HullRadius
 						} else if (abil.CastRange > 0 && abil.CastRange < 5000) {
-							detected = enemy.Distance(hero) <= abil.CastRange + CAST_RANGE_BUFFER
-								&& enemy.FindRotationAngle(hero) <= FACING_ANGLE
+							detected =
+								enemy.Distance(hero) <= abil.CastRange + CAST_RANGE_BUFFER &&
+								enemy.FindRotationAngle(hero) <= FACING_ANGLE
 						}
 					} else {
-						detected = this.InArea(enemy, hero, area)
+						detected = this.InArea(enemy, hero, resolvedArea)
 					}
 					if (!detected) {
 						continue
@@ -285,9 +462,10 @@ new (class AutoDodge {
 						this.AddZone(
 							abil.Name,
 							hero.Position.Clone(),
-							area.radius,
+							radius,
 							GameState.RawGameTime + areaLeft,
-							area.mode === AreaMode.Delayed ? "cast~" : "line"
+							area.mode === AreaMode.Delayed ? "cast~" : "line",
+							castKey
 						)
 					}
 					continue
@@ -316,7 +494,14 @@ new (class AutoDodge {
 					route: "cast"
 				})
 				if (known !== undefined && castDelay > 0) {
-					this.AddZone(abil.Name, hero.Position.Clone(), 200, GameState.RawGameTime + totalLeft, "cast")
+					this.AddZone(
+						abil.Name,
+						hero.Position.Clone(),
+						200,
+						GameState.RawGameTime + totalLeft,
+						"cast",
+						castKey
+					)
 				}
 			}
 		}
@@ -424,7 +609,13 @@ new (class AutoDodge {
 			return
 		}
 		const delay = this.ResolveDelay(undefined, abilName, area.delayKeys, area.delay)
-		this.AddZone(abilName, pos.Clone(), area.radius, GameState.RawGameTime + delay, "part")
+		this.AddZone(
+			abilName,
+			pos.Clone(),
+			Math.max(area.radius, particle.Ability?.AOERadius ?? 0),
+			GameState.RawGameTime + delay,
+			"part"
+		)
 	}
 
 	private ResolveParticleArea(path: string): Nullable<string> {
@@ -448,13 +639,23 @@ new (class AutoDodge {
 		return fallback !== undefined && fallback.IsValid ? fallback : undefined
 	}
 
-	private AddZone(name: string, pos: Vector3, radius: number, impact: number, route: string): void {
+	private AddZone(
+		name: string,
+		pos: Vector3,
+		radius: number,
+		impact: number,
+		route: string,
+		predictedCast?: string
+	): void {
 		const known = this.zones.find(x => x.name === name && x.pos.Distance2D(pos) < ZONE_MERGE_DIST)
 		if (known !== undefined) {
 			known.impact = Math.min(known.impact, impact)
+			if (predictedCast === undefined) {
+				known.predictedCast = undefined
+			}
 			return
 		}
-		this.zones.push({ name, pos, radius, impact, route })
+		this.zones.push({ name, pos, radius, impact, route, predictedCast })
 		if (this.zones.length > ZONE_CAP) {
 			this.zones.shift()
 		}
@@ -464,6 +665,25 @@ new (class AutoDodge {
 		const now = GameState.RawGameTime
 		for (let i = this.zones.length - 1; i > -1; i--) {
 			const zone = this.zones[i]
+			if (zone.predictedCast !== undefined) {
+				const pending = this.pendingCasts.get(zone.predictedCast)
+				if (
+					pending !== undefined &&
+					pending.ability.CooldownChangeTime >= pending.startedAt - 0.05 &&
+					pending.ability.Cooldown > 0
+				) {
+					pending.confirmed = true
+				}
+				if (
+					pending === undefined ||
+					(!pending.confirmed &&
+						!pending.ability.IsInAbilityPhase &&
+						now - pending.lastActiveAt > CAST_CONFIRM_GRACE)
+				) {
+					this.zones.splice(i, 1)
+					continue
+				}
+			}
 			if (now > zone.impact) {
 				this.zones.splice(i, 1)
 				continue
@@ -517,7 +737,7 @@ new (class AutoDodge {
 			if (!slot.IsShown || !slot.CanUse(hero)) {
 				continue
 			}
-			const danger = dangers.find(x => slot.Matches(x.kind, x.name) && slot.Covers(x.timeLeft))
+			const danger = dangers.find(x => slot.Matches(x.kind, x.name) && slot.Covers(x.name, x.timeLeft))
 			if (danger !== undefined) {
 				return [slot, danger]
 			}
@@ -571,9 +791,12 @@ new (class AutoDodge {
 			)
 			if (ready !== undefined) {
 				const want = dangers.find(d => ready.Matches(d.kind, d.name))
+				const wantName = want?.name ?? ""
 				counter =
 					`${ready.def.key} want${Math.round((want?.timeLeft ?? 0) * 1000)} ` +
-					`win[${Math.round(ready.GuardStart * 1000)}..${Math.round(ready.GuardEnd * 1000)}]`
+					`win[${Math.round(ready.TimingStartFor(wantName) * 1000)}..${Math.round(
+						ready.TimingEndFor(wantName) * 1000
+					)}]`
 			}
 		}
 		this.debugText = `${state} | ${dangerText} | ${counter} | ${cancel} | ${this.escape.Status} | ${this.moveDodge.Status} | ${this.autoDisable.Status}`
@@ -602,6 +825,7 @@ new (class AutoDodge {
 		this.sleeper.FullReset()
 		this.handled.clear()
 		this.zones.length = 0
+		this.pendingCasts.clear()
 		this.debugText = ""
 		this.panel.Reset()
 		this.escape.Reset()

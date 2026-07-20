@@ -1,6 +1,15 @@
 import { Ability, GameState, Hero, ImageData } from "github.com/octarine-public/wrapper/index"
 
 const GUARD_SAFETY = 0.02
+const MANTA_DAMAGE_LEAD = 0.01
+const MANTA_DAMAGE_WINDOW = 0.03
+
+interface SpellTiming {
+	readonly minTimeLeft: number
+	readonly maxTimeLeft: number
+}
+
+const MANTA_IMPACT_TIMING: SpellTiming = { minTimeLeft: 0.01, maxTimeLeft: 0.1 }
 
 export const enum CastMode {
 	Self,
@@ -23,11 +32,25 @@ export interface CounterDef {
 	readonly vsArea: boolean
 	readonly activationDelay: number
 	readonly protection: number
+	readonly triggerLead?: number
+	readonly triggerWindow?: number
+	readonly spellTimings?: Readonly<Record<string, SpellTiming>>
 	readonly spells?: string[]
 }
 
 const MANTA_SPELLS = [
-	"dark_willow_terrorize",
+	"axe_berserkers_call",
+	"techies_suicide",
+	"monkey_king_boundless_strike",
+	"obsidian_destroyer_sanity_eclipse",
+	"alchemist_unstable_concoction_throw",
+	"centaur_hoof_stomp",
+	"slardar_slithereen_crush",
+	"sven_storm_bolt",
+	"huskar_life_break",
+	"invoker_emp",
+	"magnataur_reverse_polarity",
+	"windrunner_powershot",
 	"pangolier_shield_crash",
 	"warlock_rain_of_chaos",
 	"invoker_sun_strike",
@@ -35,6 +58,7 @@ const MANTA_SPELLS = [
 	"elder_titan_earth_splitter",
 	"roshan_slam",
 	"kunkka_ghostship",
+	"lion_finger_of_death",
 	"lina_laguna_blade",
 	"bloodseeker_blood_bath",
 	"pugna_nether_blast",
@@ -55,7 +79,25 @@ const ITEM_DEFS: CounterDef[] = [
 		vsCast: true,
 		vsArea: true,
 		activationDelay: 0,
-		protection: 0.1,
+		protection: 0.12,
+		triggerLead: MANTA_DAMAGE_LEAD,
+		triggerWindow: MANTA_DAMAGE_WINDOW,
+		spellTimings: {
+			axe_berserkers_call: MANTA_IMPACT_TIMING,
+			techies_suicide: MANTA_IMPACT_TIMING,
+			monkey_king_boundless_strike: MANTA_IMPACT_TIMING,
+			obsidian_destroyer_sanity_eclipse: MANTA_IMPACT_TIMING,
+			alchemist_unstable_concoction_throw: MANTA_IMPACT_TIMING,
+			centaur_hoof_stomp: MANTA_IMPACT_TIMING,
+			slardar_slithereen_crush: MANTA_IMPACT_TIMING,
+			sven_storm_bolt: MANTA_IMPACT_TIMING,
+			huskar_life_break: MANTA_IMPACT_TIMING,
+			invoker_emp: MANTA_IMPACT_TIMING,
+			magnataur_reverse_polarity: MANTA_IMPACT_TIMING,
+			windrunner_powershot: MANTA_IMPACT_TIMING,
+			lion_finger_of_death: MANTA_IMPACT_TIMING,
+			lina_laguna_blade: MANTA_IMPACT_TIMING
+		},
 		spells: MANTA_SPELLS
 	},
 	{
@@ -189,8 +231,30 @@ export class CounterSlot {
 		return this.GuardStart + Math.max(this.def.protection - GUARD_SAFETY * 2, 0)
 	}
 
-	public Covers(timeLeft: number): boolean {
-		return timeLeft >= this.GuardStart && timeLeft <= this.GuardEnd
+	public get TimingStart(): number {
+		if (this.def.triggerLead !== undefined) {
+			return this.RequiredTime + this.def.activationDelay + GameState.InputLag + this.def.triggerLead
+		}
+		return this.GuardStart
+	}
+
+	public get TimingEnd(): number {
+		if (this.def.triggerLead !== undefined) {
+			return this.TimingStart + (this.def.triggerWindow ?? 0)
+		}
+		return this.GuardEnd
+	}
+
+	public TimingStartFor(name: string): number {
+		return this.def.spellTimings?.[name]?.minTimeLeft ?? this.TimingStart
+	}
+
+	public TimingEndFor(name: string): number {
+		return this.def.spellTimings?.[name]?.maxTimeLeft ?? this.TimingEnd
+	}
+
+	public Covers(name: string, timeLeft: number): boolean {
+		return timeLeft >= this.TimingStartFor(name) && timeLeft <= this.TimingEndFor(name)
 	}
 
 	public get Texture(): string {

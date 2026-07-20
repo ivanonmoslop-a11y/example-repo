@@ -26,23 +26,31 @@ import { MenuManager } from "./menu"
 import { CreateMoveDodgeSlots, MoveDodge } from "./moveDodge"
 import { DodgePanel } from "./panel"
 
-const PROJ_MARGIN = 0.2
-const CAST_MARGIN = 0.15
 const CAST_RANGE_BUFFER = 250
 const FACING_ANGLE = 0.45
 const DODGE_SLEEP_MS = 600
+const LATE_WINDOW = 0.1
+const REACTION_SAFETY = 0.05
 
 const enum AreaMode {
 	Caster,
 	Delayed,
-	Raze
+	Raze,
+	Line
 }
 
 interface AreaDef {
 	radius: number
 	mode: AreaMode
 	offset?: number
+	length?: number
+	delayKey?: string
 }
+
+const CAST_DELAY_KEYS: ReadonlyMap<string, string> = new Map([
+	["lina_laguna_blade", "damage_delay"],
+	["zuus_lightning_bolt", "strike_delay"]
+])
 
 const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
 	["magnataur_reverse_polarity", { radius: 410, mode: AreaMode.Caster }],
@@ -60,15 +68,15 @@ const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
 	["pangolier_shield_crash", { radius: 400, mode: AreaMode.Caster }],
 	["meepo_poof", { radius: 400, mode: AreaMode.Caster }],
 	["roshan_slam", { radius: 400, mode: AreaMode.Caster }],
-	["warlock_rain_of_chaos", { radius: 375, mode: AreaMode.Caster }],
-	["pugna_nether_blast", { radius: 350, mode: AreaMode.Caster }],
 	["dark_willow_terrorize", { radius: 600, mode: AreaMode.Caster }],
-	["invoker_sun_strike", { radius: 175, mode: AreaMode.Delayed }],
-	["kunkka_torrent", { radius: 225, mode: AreaMode.Delayed }],
-	["bloodseeker_blood_rite", { radius: 600, mode: AreaMode.Delayed }],
-	["elder_titan_earth_splitter", { radius: 300, mode: AreaMode.Delayed }],
+	["warlock_rain_of_chaos", { radius: 375, mode: AreaMode.Line, length: 1000 }],
+	["pugna_nether_blast", { radius: 350, mode: AreaMode.Line, length: 700, delayKey: "delay" }],
+	["elder_titan_earth_splitter", { radius: 200, mode: AreaMode.Line, length: 1600, delayKey: "crack_time" }],
+	["invoker_sun_strike", { radius: 175, mode: AreaMode.Delayed, delayKey: "delay" }],
+	["kunkka_torrent", { radius: 225, mode: AreaMode.Delayed, delayKey: "delay" }],
+	["bloodseeker_blood_rite", { radius: 600, mode: AreaMode.Delayed, delayKey: "delay" }],
 	["kunkka_ghostship", { radius: 425, mode: AreaMode.Delayed }],
-	["lina_light_strike_array", { radius: 225, mode: AreaMode.Delayed }],
+	["lina_light_strike_array", { radius: 225, mode: AreaMode.Delayed, delayKey: "delay" }],
 	["nevermore_shadowraze1", { radius: 250, mode: AreaMode.Raze, offset: 200 }],
 	["nevermore_shadowraze2", { radius: 250, mode: AreaMode.Raze, offset: 450 }],
 	["nevermore_shadowraze3", { radius: 250, mode: AreaMode.Raze, offset: 700 }]
@@ -78,7 +86,6 @@ interface Danger {
 	kind: DangerKind
 	name: string
 	timeLeft: number
-	window: number
 	projID?: number
 }
 
@@ -139,7 +146,7 @@ new (class AutoDodge {
 		}
 		const danger = this.FindDanger(hero)
 		this.UpdateDebug(hero, danger)
-		if (danger === undefined || danger.timeLeft > danger.window) {
+		if (danger === undefined) {
 			return
 		}
 		if (this.sleeper.Sleeping("dodge")) {
@@ -159,7 +166,6 @@ new (class AutoDodge {
 		let best: Nullable<Danger>
 		const alive = new Set<number>()
 		const projs = ProjectileManager.AllTrackingProjectiles
-		const projWindow = GameState.InputLag + PROJ_MARGIN
 		for (const proj of projs) {
 			alive.add(proj.ID)
 			if (
@@ -185,7 +191,6 @@ new (class AutoDodge {
 					kind: DangerKind.Projectile,
 					name: proj.Ability?.Name ?? "projectile",
 					timeLeft,
-					window: projWindow,
 					projID: proj.ID
 				}
 			}
@@ -214,26 +219,25 @@ new (class AutoDodge {
 
 	private CastDanger(enemy: Hero, hero: Hero): Nullable<Danger> {
 		let best: Nullable<Danger>
-		const castWindow = GameState.InputLag + CAST_MARGIN
 		const lists: Nullable<Ability>[][] = [enemy.Spells, enemy.Items]
 		for (const list of lists) {
 			for (const abil of list) {
 				if (abil === undefined || !abil.IsValid || !abil.IsInAbilityPhase) {
 					continue
 				}
+				const castLeft = Math.max(abil.CastPoint - (GameState.RawGameTime - abil.IsInAbilityPhaseChangeTime), 0)
 				const area = AREA_SPELLS.get(abil.Name)
 				if (area !== undefined) {
 					if (area.mode === AreaMode.Delayed || !this.InArea(enemy, hero, area)) {
 						continue
 					}
-					const areaElapsed = GameState.RawGameTime - abil.IsInAbilityPhaseChangeTime
-					const areaLeft = Math.max(abil.CastPoint - areaElapsed, 0)
+					const areaDelay = area.delayKey !== undefined ? abil.GetSpecialValue(area.delayKey) : 0
+					const areaLeft = castLeft + areaDelay
 					if (best === undefined || areaLeft < best.timeLeft) {
 						best = {
 							kind: DangerKind.AreaCast,
 							name: abil.Name,
-							timeLeft: areaLeft,
-							window: castWindow
+							timeLeft: areaLeft
 						}
 					}
 					continue
@@ -251,14 +255,13 @@ new (class AutoDodge {
 				if (enemy.FindRotationAngle(hero) > FACING_ANGLE) {
 					continue
 				}
-				const elapsed = GameState.RawGameTime - abil.IsInAbilityPhaseChangeTime
-				const timeLeft = Math.max(abil.CastPoint - elapsed, 0)
+				const delayKey = CAST_DELAY_KEYS.get(abil.Name)
+				const timeLeft = castLeft + (delayKey !== undefined ? abil.GetSpecialValue(delayKey) : 0)
 				if (best === undefined || timeLeft < best.timeLeft) {
 					best = {
 						kind: DangerKind.Cast,
 						name: abil.Name,
-						timeLeft,
-						window: castWindow
+						timeLeft
 					}
 				}
 			}
@@ -268,6 +271,9 @@ new (class AutoDodge {
 
 	private InArea(enemy: Hero, hero: Hero, area: AreaDef): boolean {
 		const limit = area.radius + hero.HullRadius
+		if (area.mode === AreaMode.Line) {
+			return this.InLine(enemy, hero, area, limit)
+		}
 		if (area.mode !== AreaMode.Raze) {
 			return enemy.Distance2D(hero) <= limit
 		}
@@ -279,6 +285,19 @@ new (class AutoDodge {
 			enemy.Position.z
 		)
 		return center.Distance2D(hero.Position) <= limit
+	}
+
+	private InLine(enemy: Hero, hero: Hero, area: AreaDef, limit: number): boolean {
+		const angle = enemy.RotationRad
+		const fx = Math.cos(angle)
+		const fy = Math.sin(angle)
+		const dx = hero.Position.x - enemy.Position.x
+		const dy = hero.Position.y - enemy.Position.y
+		const along = dx * fx + dy * fy
+		if (along < -hero.HullRadius || along > (area.length ?? 0) + area.radius) {
+			return false
+		}
+		return Math.abs(dx * fy - dy * fx) <= limit
 	}
 
 	private ThinkerDanger(hero: Hero): Nullable<Danger> {
@@ -305,13 +324,14 @@ new (class AutoDodge {
 				if (thinker.Position.Distance2D(hero.Position) > radius + hero.HullRadius) {
 					continue
 				}
-				const timeLeft = Math.max(buff.DieTime - now, 0)
+				const delay = area.delayKey !== undefined ? buff.Ability?.GetSpecialValue(area.delayKey) ?? 0 : 0
+				const impact = delay > 0 ? buff.CreationTime + delay : buff.DieTime
+				const timeLeft = Math.max(impact - now, 0)
 				if (best === undefined || timeLeft < best.timeLeft) {
 					best = {
 						kind: DangerKind.AreaCast,
 						name: abilName,
-						timeLeft,
-						window: GameState.InputLag + CAST_MARGIN
+						timeLeft
 					}
 				}
 			}
@@ -320,7 +340,13 @@ new (class AutoDodge {
 	}
 
 	private PickCounter(hero: Hero, danger: Danger): Nullable<CounterSlot> {
-		return this.slots.find(x => x.IsShown && x.Matches(danger.kind, danger.name) && x.CanUse(hero))
+		return this.slots.find(x => {
+			if (!x.IsShown || !x.Matches(danger.kind, danger.name) || !x.CanUse(hero)) {
+				return false
+			}
+			const slack = danger.timeLeft - (x.RequiredTime + GameState.InputLag + REACTION_SAFETY)
+			return slack > 0 && slack <= LATE_WINDOW
+		})
 	}
 
 	private UseCounter(hero: Hero, slot: CounterSlot, danger: Danger): void {
@@ -358,7 +384,14 @@ new (class AutoDodge {
 			dangerText = `${kind} ${danger.name} ${Math.round(danger.timeLeft * 1000)}ms`
 		}
 		const slot = danger !== undefined ? this.PickCounter(hero, danger) : undefined
-		const counter = slot !== undefined ? slot.def.key : "none"
+		let counter = slot !== undefined ? slot.def.key : "none"
+		if (slot === undefined && danger !== undefined) {
+			const ready = this.slots.find(x => x.IsShown && x.Matches(danger.kind, danger.name) && x.CanUse(hero))
+			if (ready !== undefined) {
+				const slack = danger.timeLeft - (ready.RequiredTime + GameState.InputLag + REACTION_SAFETY)
+				counter = `${ready.def.key} slack${Math.round(slack * 1000)}`
+			}
+		}
 		this.debugText = `${state} | ${dangerText} | ${counter} | ${cancel} | ${this.escape.Status} | ${this.moveDodge.Status} | ${this.autoDisable.Status}`
 	}
 

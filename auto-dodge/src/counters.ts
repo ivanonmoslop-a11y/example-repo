@@ -152,6 +152,11 @@ export class CounterSlot {
 		return this.def.isItem || this.IsFound
 	}
 
+	public get RequiredTime(): number {
+		const abil = this.ability
+		return abil !== undefined && abil.IsValid ? abil.CastPoint : 0
+	}
+
 	public get Texture(): string {
 		const abil = this.ability
 		const name = abil !== undefined && abil.IsValid ? abil.Name : this.def.names[0]

@@ -14,7 +14,9 @@ import {
 	ProjectileManager,
 	RendererSDK,
 	Sleeper,
-	Unit
+	Thinker,
+	Unit,
+	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
 import { CastMode, CounterSlot, CreateSlots, DangerKind } from "./counters"
@@ -30,19 +32,46 @@ const CAST_RANGE_BUFFER = 250
 const FACING_ANGLE = 0.45
 const DODGE_SLEEP_MS = 600
 
-const AREA_SPELLS: ReadonlyMap<string, number> = new Map([
-	["magnataur_reverse_polarity", 410],
-	["enigma_black_hole", 420],
-	["faceless_void_chronosphere", 450],
-	["tidehunter_ravage", 1250],
-	["earthshaker_echo_slam", 600],
-	["sandking_epicenter", 600],
-	["puck_dream_coil", 600],
-	["axe_berserkers_call", 320],
-	["disruptor_static_storm", 450],
-	["winter_wyvern_winters_curse", 500],
-	["void_spirit_astral_step", 450],
-	["dark_seer_vacuum", 500]
+const enum AreaMode {
+	Caster,
+	Delayed,
+	Raze
+}
+
+interface AreaDef {
+	radius: number
+	mode: AreaMode
+	offset?: number
+}
+
+const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
+	["magnataur_reverse_polarity", { radius: 410, mode: AreaMode.Caster }],
+	["enigma_black_hole", { radius: 420, mode: AreaMode.Caster }],
+	["faceless_void_chronosphere", { radius: 450, mode: AreaMode.Caster }],
+	["tidehunter_ravage", { radius: 1250, mode: AreaMode.Caster }],
+	["earthshaker_echo_slam", { radius: 600, mode: AreaMode.Caster }],
+	["sandking_epicenter", { radius: 600, mode: AreaMode.Caster }],
+	["puck_dream_coil", { radius: 600, mode: AreaMode.Caster }],
+	["axe_berserkers_call", { radius: 320, mode: AreaMode.Caster }],
+	["disruptor_static_storm", { radius: 450, mode: AreaMode.Caster }],
+	["winter_wyvern_winters_curse", { radius: 500, mode: AreaMode.Caster }],
+	["void_spirit_astral_step", { radius: 450, mode: AreaMode.Caster }],
+	["dark_seer_vacuum", { radius: 500, mode: AreaMode.Caster }],
+	["pangolier_shield_crash", { radius: 400, mode: AreaMode.Caster }],
+	["meepo_poof", { radius: 400, mode: AreaMode.Caster }],
+	["roshan_slam", { radius: 400, mode: AreaMode.Caster }],
+	["warlock_rain_of_chaos", { radius: 375, mode: AreaMode.Caster }],
+	["pugna_nether_blast", { radius: 350, mode: AreaMode.Caster }],
+	["dark_willow_terrorize", { radius: 600, mode: AreaMode.Caster }],
+	["invoker_sun_strike", { radius: 175, mode: AreaMode.Delayed }],
+	["kunkka_torrent", { radius: 225, mode: AreaMode.Delayed }],
+	["bloodseeker_blood_rite", { radius: 600, mode: AreaMode.Delayed }],
+	["elder_titan_earth_splitter", { radius: 300, mode: AreaMode.Delayed }],
+	["kunkka_ghostship", { radius: 425, mode: AreaMode.Delayed }],
+	["lina_light_strike_array", { radius: 225, mode: AreaMode.Delayed }],
+	["nevermore_shadowraze1", { radius: 250, mode: AreaMode.Raze, offset: 200 }],
+	["nevermore_shadowraze2", { radius: 250, mode: AreaMode.Raze, offset: 450 }],
+	["nevermore_shadowraze3", { radius: 250, mode: AreaMode.Raze, offset: 700 }]
 ])
 
 interface Danger {
@@ -176,6 +205,10 @@ new (class AutoDodge {
 				best = danger
 			}
 		}
+		const delayed = this.ThinkerDanger(hero)
+		if (delayed !== undefined && (best === undefined || delayed.timeLeft < best.timeLeft)) {
+			best = delayed
+		}
 		return best
 	}
 
@@ -188,9 +221,9 @@ new (class AutoDodge {
 				if (abil === undefined || !abil.IsValid || !abil.IsInAbilityPhase) {
 					continue
 				}
-				const areaRadius = AREA_SPELLS.get(abil.Name)
-				if (areaRadius !== undefined) {
-					if (enemy.Distance2D(hero) > areaRadius + hero.HullRadius) {
+				const area = AREA_SPELLS.get(abil.Name)
+				if (area !== undefined) {
+					if (area.mode === AreaMode.Delayed || !this.InArea(enemy, hero, area)) {
 						continue
 					}
 					const areaElapsed = GameState.RawGameTime - abil.IsInAbilityPhaseChangeTime
@@ -233,8 +266,61 @@ new (class AutoDodge {
 		return best
 	}
 
+	private InArea(enemy: Hero, hero: Hero, area: AreaDef): boolean {
+		const limit = area.radius + hero.HullRadius
+		if (area.mode !== AreaMode.Raze) {
+			return enemy.Distance2D(hero) <= limit
+		}
+		const angle = enemy.RotationRad
+		const dist = area.offset ?? 0
+		const center = new Vector3(
+			enemy.Position.x + Math.cos(angle) * dist,
+			enemy.Position.y + Math.sin(angle) * dist,
+			enemy.Position.z
+		)
+		return center.Distance2D(hero.Position) <= limit
+	}
+
+	private ThinkerDanger(hero: Hero): Nullable<Danger> {
+		const now = GameState.RawGameTime
+		let best: Nullable<Danger>
+		for (const thinker of EntityManager.GetEntitiesByClass(Thinker)) {
+			if (!thinker.IsValid || !thinker.IsAlive) {
+				continue
+			}
+			for (const buff of thinker.Buffs) {
+				const abilName = buff.Ability?.Name
+				if (abilName === undefined) {
+					continue
+				}
+				const area = AREA_SPELLS.get(abilName)
+				if (area === undefined || area.mode !== AreaMode.Delayed) {
+					continue
+				}
+				const caster = buff.Caster
+				if (caster instanceof Unit && !caster.IsEnemy(hero)) {
+					continue
+				}
+				const radius = Math.max(area.radius, buff.Ability?.AOERadius ?? 0)
+				if (thinker.Position.Distance2D(hero.Position) > radius + hero.HullRadius) {
+					continue
+				}
+				const timeLeft = Math.max(buff.DieTime - now, 0)
+				if (best === undefined || timeLeft < best.timeLeft) {
+					best = {
+						kind: DangerKind.AreaCast,
+						name: abilName,
+						timeLeft,
+						window: GameState.InputLag + CAST_MARGIN
+					}
+				}
+			}
+		}
+		return best
+	}
+
 	private PickCounter(hero: Hero, danger: Danger): Nullable<CounterSlot> {
-		return this.slots.find(x => x.IsShown && x.Matches(danger.kind) && x.CanUse(hero))
+		return this.slots.find(x => x.IsShown && x.Matches(danger.kind, danger.name) && x.CanUse(hero))
 	}
 
 	private UseCounter(hero: Hero, slot: CounterSlot, danger: Danger): void {

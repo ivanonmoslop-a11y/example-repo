@@ -19,7 +19,27 @@ export interface CounterDef {
 	readonly vsProjectile: boolean
 	readonly vsCast: boolean
 	readonly vsArea: boolean
+	readonly spells?: string[]
 }
+
+const MANTA_SPELLS = [
+	"dark_willow_terrorize",
+	"pangolier_shield_crash",
+	"warlock_rain_of_chaos",
+	"invoker_sun_strike",
+	"kunkka_torrent",
+	"elder_titan_earth_splitter",
+	"roshan_slam",
+	"kunkka_ghostship",
+	"lina_laguna_blade",
+	"bloodseeker_blood_rite",
+	"pugna_nether_blast",
+	"meepo_poof",
+	"nevermore_shadowraze1",
+	"nevermore_shadowraze2",
+	"nevermore_shadowraze3",
+	"zuus_lightning_bolt"
+]
 
 const ITEM_DEFS: CounterDef[] = [
 	{
@@ -28,8 +48,9 @@ const ITEM_DEFS: CounterDef[] = [
 		names: ["item_manta"],
 		mode: CastMode.NoTarget,
 		vsProjectile: true,
-		vsCast: false,
-		vsArea: true
+		vsCast: true,
+		vsArea: true,
+		spells: MANTA_SPELLS
 	},
 	{
 		key: "eul",
@@ -137,15 +158,15 @@ export class CounterSlot {
 		return this.def.isItem ? ImageData.GetItemTexture(name) : ImageData.GetSpellTexture(name)
 	}
 
-	public Matches(kind: DangerKind): boolean {
-		switch (kind) {
-			case DangerKind.Projectile:
-				return this.def.vsProjectile
-			case DangerKind.AreaCast:
-				return this.def.vsArea
-			default:
-				return this.def.vsCast
+	public Matches(kind: DangerKind, name: string): boolean {
+		if (kind === DangerKind.Projectile) {
+			return this.def.vsProjectile
 		}
+		const list = this.def.spells
+		if (list !== undefined) {
+			return list.includes(name)
+		}
+		return kind === DangerKind.AreaCast ? this.def.vsArea : this.def.vsCast
 	}
 
 	public CanUse(hero: Hero): boolean {

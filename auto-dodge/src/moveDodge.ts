@@ -15,6 +15,8 @@ import {
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
+import { AbilityNameFromModifier } from "./names"
+
 const DODGE_MARGIN = 60
 const EXIT_MARGIN = 140
 const BLOCK_TAIL = 0.15
@@ -323,7 +325,7 @@ const SPELLS: SpellDef[] = [
 		particles: ["snapfire_cookie_landing"]
 	},
 	{
-		name: "bloodseeker_blood_rite",
+		name: "bloodseeker_blood_bath",
 		shape: Shape.Circle,
 		radius: 600,
 		delay: 2.6,
@@ -676,10 +678,7 @@ export class MoveDodge {
 				if (caster instanceof Unit && !caster.IsEnemy(hero)) {
 					continue
 				}
-				const abilName = buff.Ability?.Name
-				if (abilName === undefined) {
-					continue
-				}
+				const abilName = buff.Ability?.Name ?? AbilityNameFromModifier(buff.Name)
 				const slot = this.nameMap.get(abilName)
 				if (slot === undefined || !slot.enabled) {
 					continue

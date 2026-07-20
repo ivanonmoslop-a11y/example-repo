@@ -32,7 +32,7 @@ const MANTA_SPELLS = [
 	"roshan_slam",
 	"kunkka_ghostship",
 	"lina_laguna_blade",
-	"bloodseeker_blood_rite",
+	"bloodseeker_blood_bath",
 	"pugna_nether_blast",
 	"meepo_poof",
 	"nevermore_shadowraze1",

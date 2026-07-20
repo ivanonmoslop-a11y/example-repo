@@ -11,6 +11,7 @@ import {
 	GameState,
 	Hero,
 	LocalPlayer,
+	Modifier,
 	ProjectileManager,
 	RendererSDK,
 	Sleeper,
@@ -24,6 +25,7 @@ import { AutoDisable, CreateDisableSlots, DISABLE_TRIGGER_AGE } from "./disable"
 import { BlinkEscape } from "./escape"
 import { MenuManager } from "./menu"
 import { CreateMoveDodgeSlots, MoveDodge } from "./moveDodge"
+import { AbilityNameFromModifier } from "./names"
 import { DodgePanel } from "./panel"
 
 const CAST_RANGE_BUFFER = 250
@@ -31,6 +33,7 @@ const FACING_ANGLE = 0.45
 const DODGE_SLEEP_MS = 600
 const LATE_WINDOW = 0.1
 const REACTION_SAFETY = 0.05
+const ZONE_CAP = 32
 
 const enum AreaMode {
 	Caster,
@@ -44,12 +47,18 @@ interface AreaDef {
 	mode: AreaMode
 	offset?: number
 	length?: number
-	delayKey?: string
+	delayKeys?: string[]
+	delay?: number
 }
 
-const CAST_DELAY_KEYS: ReadonlyMap<string, string> = new Map([
-	["lina_laguna_blade", "damage_delay"],
-	["zuus_lightning_bolt", "strike_delay"]
+interface CastDef {
+	delayKeys?: string[]
+	delay?: number
+}
+
+const CAST_SPELLS: ReadonlyMap<string, CastDef> = new Map([
+	["lina_laguna_blade", { delayKeys: ["damage_delay"], delay: 0.05 }],
+	["zuus_lightning_bolt", { delayKeys: ["strike_delay", "delay"], delay: 0.35 }]
 ])
 
 const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
@@ -69,14 +78,26 @@ const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
 	["meepo_poof", { radius: 400, mode: AreaMode.Caster }],
 	["roshan_slam", { radius: 400, mode: AreaMode.Caster }],
 	["dark_willow_terrorize", { radius: 600, mode: AreaMode.Caster }],
-	["warlock_rain_of_chaos", { radius: 375, mode: AreaMode.Line, length: 1000 }],
-	["pugna_nether_blast", { radius: 350, mode: AreaMode.Line, length: 700, delayKey: "delay" }],
-	["elder_titan_earth_splitter", { radius: 200, mode: AreaMode.Line, length: 1600, delayKey: "crack_time" }],
-	["invoker_sun_strike", { radius: 175, mode: AreaMode.Delayed, delayKey: "delay" }],
-	["kunkka_torrent", { radius: 225, mode: AreaMode.Delayed, delayKey: "delay" }],
-	["bloodseeker_blood_rite", { radius: 600, mode: AreaMode.Delayed, delayKey: "delay" }],
+	[
+		"warlock_rain_of_chaos",
+		{
+			radius: 375,
+			mode: AreaMode.Line,
+			length: 1000,
+			delayKeys: ["impact_delay", "golem_spawn_delay", "delay"],
+			delay: 2
+		}
+	],
+	["pugna_nether_blast", { radius: 350, mode: AreaMode.Line, length: 700, delayKeys: ["delay"], delay: 0.4 }],
+	[
+		"elder_titan_earth_splitter",
+		{ radius: 200, mode: AreaMode.Line, length: 1600, delayKeys: ["crack_time"], delay: 3.3 }
+	],
+	["invoker_sun_strike", { radius: 175, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 1.7 }],
+	["kunkka_torrent", { radius: 225, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 1.6 }],
+	["bloodseeker_blood_bath", { radius: 600, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 2.6 }],
 	["kunkka_ghostship", { radius: 425, mode: AreaMode.Delayed }],
-	["lina_light_strike_array", { radius: 225, mode: AreaMode.Delayed, delayKey: "delay" }],
+	["lina_light_strike_array", { radius: 225, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 0.5 }],
 	["nevermore_shadowraze1", { radius: 250, mode: AreaMode.Raze, offset: 200 }],
 	["nevermore_shadowraze2", { radius: 250, mode: AreaMode.Raze, offset: 450 }],
 	["nevermore_shadowraze3", { radius: 250, mode: AreaMode.Raze, offset: 700 }]
@@ -100,10 +121,12 @@ new (class AutoDodge {
 	private readonly autoDisable = new AutoDisable(this.disableSlots)
 	private readonly sleeper = new Sleeper()
 	private readonly handled = new Set<number>()
+	private readonly zones: { name: string; pos: Vector3; radius: number; impact: number }[] = []
 	private debugText = ""
 
 	constructor() {
 		this.menu.PanelKey.OnPressed(() => this.panel.Toggle())
+		EventsSDK.on("ModifierCreated", this.ModifierCreated.bind(this))
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
 		EventsSDK.on("Draw", this.Draw.bind(this))
 		EventsSDK.on("GameEnded", this.GameEnded.bind(this))
@@ -214,6 +237,10 @@ new (class AutoDodge {
 		if (delayed !== undefined && (best === undefined || delayed.timeLeft < best.timeLeft)) {
 			best = delayed
 		}
+		const zone = this.ZoneDanger(hero)
+		if (zone !== undefined && (best === undefined || zone.timeLeft < best.timeLeft)) {
+			best = zone
+		}
 		return best
 	}
 
@@ -231,8 +258,7 @@ new (class AutoDodge {
 					if (area.mode === AreaMode.Delayed || !this.InArea(enemy, hero, area)) {
 						continue
 					}
-					const areaDelay = area.delayKey !== undefined ? abil.GetSpecialValue(area.delayKey) : 0
-					const areaLeft = castLeft + areaDelay
+					const areaLeft = castLeft + this.ResolveDelay(abil, area.delayKeys, area.delay)
 					if (best === undefined || areaLeft < best.timeLeft) {
 						best = {
 							kind: DangerKind.AreaCast,
@@ -242,10 +268,12 @@ new (class AutoDodge {
 					}
 					continue
 				}
+				const known = CAST_SPELLS.get(abil.Name)
 				if (
-					!abil.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_UNIT_TARGET) ||
-					!abil.HasTargetTeam(DOTA_UNIT_TARGET_TEAM.DOTA_UNIT_TARGET_TEAM_ENEMY) ||
-					abil.Speed > 0
+					known === undefined &&
+					(!abil.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_UNIT_TARGET) ||
+						!abil.HasTargetTeam(DOTA_UNIT_TARGET_TEAM.DOTA_UNIT_TARGET_TEAM_ENEMY) ||
+						abil.Speed > 0)
 				) {
 					continue
 				}
@@ -255,8 +283,7 @@ new (class AutoDodge {
 				if (enemy.FindRotationAngle(hero) > FACING_ANGLE) {
 					continue
 				}
-				const delayKey = CAST_DELAY_KEYS.get(abil.Name)
-				const timeLeft = castLeft + (delayKey !== undefined ? abil.GetSpecialValue(delayKey) : 0)
+				const timeLeft = castLeft + this.ResolveDelay(abil, known?.delayKeys, known?.delay)
 				if (best === undefined || timeLeft < best.timeLeft) {
 					best = {
 						kind: DangerKind.Cast,
@@ -267,6 +294,18 @@ new (class AutoDodge {
 			}
 		}
 		return best
+	}
+
+	private ResolveDelay(abil: Nullable<Ability>, keys: Nullable<string[]>, fallback: Nullable<number>): number {
+		if (abil !== undefined && abil.IsValid && keys !== undefined) {
+			for (const key of keys) {
+				const value = abil.GetSpecialValue(key)
+				if (value > 0) {
+					return value
+				}
+			}
+		}
+		return fallback ?? 0
 	}
 
 	private InArea(enemy: Hero, hero: Hero, area: AreaDef): boolean {
@@ -300,6 +339,52 @@ new (class AutoDodge {
 		return Math.abs(dx * fy - dy * fx) <= limit
 	}
 
+	private ModifierCreated(buff: Modifier): void {
+		const abilName = buff.Ability?.Name ?? AbilityNameFromModifier(buff.Name)
+		const area = AREA_SPELLS.get(abilName)
+		if (area === undefined || area.mode !== AreaMode.Delayed) {
+			return
+		}
+		const parent = buff.Parent
+		if (parent === undefined || !parent.IsValid) {
+			return
+		}
+		const caster = buff.Caster
+		if (caster instanceof Unit && !caster.IsEnemy()) {
+			return
+		}
+		const delay = this.ResolveDelay(buff.Ability, area.delayKeys, area.delay)
+		this.zones.push({
+			name: abilName,
+			pos: parent.Position.Clone(),
+			radius: Math.max(area.radius, buff.Ability?.AOERadius ?? 0),
+			impact: GameState.RawGameTime + delay
+		})
+		if (this.zones.length > ZONE_CAP) {
+			this.zones.shift()
+		}
+	}
+
+	private ZoneDanger(hero: Hero): Nullable<Danger> {
+		const now = GameState.RawGameTime
+		let best: Nullable<Danger>
+		for (let i = this.zones.length - 1; i > -1; i--) {
+			const zone = this.zones[i]
+			if (now > zone.impact) {
+				this.zones.splice(i, 1)
+				continue
+			}
+			if (zone.pos.Distance2D(hero.Position) > zone.radius + hero.HullRadius) {
+				continue
+			}
+			const timeLeft = zone.impact - now
+			if (best === undefined || timeLeft < best.timeLeft) {
+				best = { kind: DangerKind.AreaCast, name: zone.name, timeLeft }
+			}
+		}
+		return best
+	}
+
 	private ThinkerDanger(hero: Hero): Nullable<Danger> {
 		const now = GameState.RawGameTime
 		let best: Nullable<Danger>
@@ -308,10 +393,7 @@ new (class AutoDodge {
 				continue
 			}
 			for (const buff of thinker.Buffs) {
-				const abilName = buff.Ability?.Name
-				if (abilName === undefined) {
-					continue
-				}
+				const abilName = buff.Ability?.Name ?? AbilityNameFromModifier(buff.Name)
 				const area = AREA_SPELLS.get(abilName)
 				if (area === undefined || area.mode !== AreaMode.Delayed) {
 					continue
@@ -324,7 +406,7 @@ new (class AutoDodge {
 				if (thinker.Position.Distance2D(hero.Position) > radius + hero.HullRadius) {
 					continue
 				}
-				const delay = area.delayKey !== undefined ? buff.Ability?.GetSpecialValue(area.delayKey) ?? 0 : 0
+				const delay = this.ResolveDelay(buff.Ability, area.delayKeys, area.delay)
 				const impact = delay > 0 ? buff.CreationTime + delay : buff.DieTime
 				const timeLeft = Math.max(impact - now, 0)
 				if (best === undefined || timeLeft < best.timeLeft) {
@@ -417,6 +499,7 @@ new (class AutoDodge {
 	private GameEnded(): void {
 		this.sleeper.FullReset()
 		this.handled.clear()
+		this.zones.length = 0
 		this.debugText = ""
 		this.panel.Reset()
 		this.escape.Reset()

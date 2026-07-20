@@ -97,7 +97,7 @@ const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
 	],
 	["invoker_sun_strike", { radius: 175, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 1.7 }],
 	["kunkka_torrent", { radius: 225, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 1.6 }],
-	["bloodseeker_blood_bath", { radius: 600, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 2.9 }],
+	["bloodseeker_blood_bath", { radius: 600, mode: AreaMode.Delayed, delay: 2.9 }],
 	["kunkka_ghostship", { radius: 425, mode: AreaMode.Delayed }],
 	["lina_light_strike_array", { radius: 225, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 0.5 }],
 	["nevermore_shadowraze1", { radius: 250, mode: AreaMode.Raze, offset: 200 }],

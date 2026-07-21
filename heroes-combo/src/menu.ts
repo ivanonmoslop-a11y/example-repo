@@ -7,6 +7,7 @@ export class EarthSpiritMenu {
 	public readonly GeomagneticGrip: Menu.Toggle
 	public readonly RollingBoulder: Menu.Toggle
 	public readonly ExtendMagnetize: Menu.Toggle
+	public readonly KickToAlly: Menu.KeyBind
 
 	constructor(parent: Menu.Node) {
 		const tree = parent.AddNode("Earth Spirit", ImageData.GetHeroTexture("npc_dota_hero_earth_spirit", true))
@@ -45,6 +46,12 @@ export class EarthSpiritMenu {
 			"Продлевает ульту: ставит камень рядом\nс намагниченным врагом, когда дебафф\nвот-вот спадёт",
 			0,
 			ImageData.GetSpellTexture("earth_spirit_magnetize")
+		)
+
+		this.KickToAlly = tree.AddKeybind(
+			"Kick To Ally",
+			"None",
+			"Пока зажата: пинает ближайшего врага\nв сторону союзника рядом с ним.\nЕсли есть блинк — прыгает на позицию\nза врагом, иначе подходит пешком"
 		)
 	}
 }

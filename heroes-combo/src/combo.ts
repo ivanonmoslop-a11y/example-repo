@@ -26,10 +26,12 @@ import { EarthSpiritMenu } from "./menu"
 const MAGNETIZE_MODIFIER = "modifier_earth_spirit_magnetize"
 const PETRIFY_ABILITY = "earth_spirit_petrify"
 const CAST_GAP = 0.25
+const CAST_POINT_MARGIN = 0.1
 const ATTACK_GAP = 0.3
 const STONE_NEAR_RADIUS = 220
 const GRIP_STONE_BEHIND = 150
 const ROLL_PLACE_DISTANCE = 250
+const ROLL_CLOSE_RANGE = 300
 const ROLL_SPEED_FALLBACK = 1600
 const RANGE_BUFFER = 100
 const TARGET_LINE_KEY = "heroes_combo_target_line"
@@ -66,7 +68,7 @@ export class ComboManager {
 	private PostDataUpdate(): void {
 		const hero = this.Hero
 		if (!this.menu.State.value || !this.menu.ComboKey.isPressed || !this.InGame || hero === undefined) {
-			this.ClearTarget()
+			this.Reset()
 			return
 		}
 		const enemy = this.FindEnemy()
@@ -90,12 +92,12 @@ export class ComboManager {
 
 		if (this.Enabled("earth_spirit_geomagnetic_grip") && this.Ready(grip) && this.InRange(hero, grip!, enemy)) {
 			const behind = hero.Position.Extend(enemy.Position, hero.Distance2D(enemy) + GRIP_STONE_BEHIND)
-			if (!this.HasStoneNear(behind, STONE_NEAR_RADIUS)) {
-				if (this.PlaceStone(hero, stone, behind)) {
-					return
-				}
-			} else {
+			const stonePosition = this.StonePosition(hero, stone, behind)
+			if (this.HasStoneNear(stonePosition, STONE_NEAR_RADIUS)) {
 				this.Cast(hero, grip!, enemy.Position)
+				return
+			}
+			if (this.PlaceStone(hero, stone, stonePosition)) {
 				return
 			}
 		}
@@ -106,24 +108,28 @@ export class ComboManager {
 			this.InRange(hero, rolling!, enemy)
 		) {
 			const aim = this.PredictRoll(hero, rolling!, enemy)
-			const rollStone = hero.Position.Extend(aim, ROLL_PLACE_DISTANCE)
-			if (!this.HasStoneNear(rollStone, STONE_NEAR_RADIUS)) {
-				if (this.PlaceStone(hero, stone, rollStone)) {
-					return
-				}
-			} else {
+			if (hero.Distance2D(enemy) <= ROLL_CLOSE_RANGE) {
 				this.Cast(hero, rolling!, aim)
 				return
 			}
+			const stonePosition = this.StonePosition(hero, stone, hero.Position.Extend(aim, ROLL_PLACE_DISTANCE))
+			if (this.HasStoneNear(stonePosition, STONE_NEAR_RADIUS)) {
+				this.Cast(hero, rolling!, aim)
+				return
+			}
+			if (this.PlaceStone(hero, stone, stonePosition)) {
+				return
+			}
+			this.Cast(hero, rolling!, aim)
+			return
 		}
 
 		if (this.Enabled("earth_spirit_boulder_smash") && this.Ready(smash) && this.InRange(hero, smash!, enemy)) {
-			if (!this.HasStoneNear(hero.Position, STONE_NEAR_RADIUS)) {
-				if (this.PlaceStone(hero, stone, hero.Position)) {
-					return
-				}
-			} else {
+			if (this.HasStoneNear(hero.Position, STONE_NEAR_RADIUS)) {
 				this.Cast(hero, smash!, enemy.Position)
+				return
+			}
+			if (this.PlaceStone(hero, stone, hero.Position)) {
 				return
 			}
 		}
@@ -145,7 +151,7 @@ export class ComboManager {
 			this.InRange(hero, petrify, enemy)
 		) {
 			hero.CastTarget(petrify, enemy)
-			this.nextCastTime = GameState.RawGameTime + CAST_GAP
+			this.LockCast(petrify)
 			return
 		}
 
@@ -204,6 +210,14 @@ export class ComboManager {
 		return range <= 0 || hero.Distance2D(enemy) <= range + RANGE_BUFFER
 	}
 
+	private StonePosition(
+		hero: npc_dota_hero_earth_spirit,
+		stone: Nullable<earth_spirit_stone_caller>,
+		position: Vector3
+	): Vector3 {
+		return this.ClampToRange(hero, position, stone?.CastRange ?? 0)
+	}
+
 	private PlaceStone(
 		hero: npc_dota_hero_earth_spirit,
 		stone: Nullable<earth_spirit_stone_caller>,
@@ -217,14 +231,19 @@ export class ComboManager {
 		) {
 			return false
 		}
-		hero.CastPosition(stone, this.ClampToRange(hero, position, stone.CastRange))
-		this.nextCastTime = GameState.RawGameTime + CAST_GAP
+		hero.CastPosition(stone, position)
+		this.LockCast(stone)
 		return true
 	}
 
 	private Cast(hero: npc_dota_hero_earth_spirit, ability: Ability, position: Vector3): void {
 		hero.CastPosition(ability, this.ClampToRange(hero, position, ability.CastRange))
-		this.nextCastTime = GameState.RawGameTime + CAST_GAP
+		this.LockCast(ability)
+	}
+
+	private LockCast(ability: Ability): void {
+		const wait = Math.max(CAST_GAP, ability.CastPoint + CAST_POINT_MARGIN)
+		this.nextCastTime = GameState.RawGameTime + wait
 	}
 
 	private HasStoneNear(position: Vector3, radius: number): boolean {
@@ -252,10 +271,14 @@ export class ComboManager {
 		this.particles.DestroyByKey(TARGET_LINE_KEY)
 	}
 
-	private GameEnded(): void {
-		this.menu.ComboKey.isPressed = false
+	private Reset(): void {
 		this.nextCastTime = 0
 		this.lastAttackTime = 0
 		this.ClearTarget()
+	}
+
+	private GameEnded(): void {
+		this.menu.ComboKey.isPressed = false
+		this.Reset()
 	}
 }

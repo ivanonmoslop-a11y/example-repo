@@ -17,6 +17,7 @@ import {
 	Hero,
 	LocalPlayer,
 	npc_dota_hero_earth_spirit,
+	Vector2,
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
@@ -27,6 +28,7 @@ const SMASH_RADIUS = 200
 const GRIP_RADIUS = 175
 const ROLL_RADIUS = 200
 const ROLL_PLACE_DISTANCE = 250
+const ROLL_HIT_RADIUS = 100
 const MAGNETIZE_EXTEND_TIME = 1
 const MAGNETIZE_RELOCK = 1
 const PLACE_COOLDOWN = 0.25
@@ -129,6 +131,9 @@ export class EarthSpiritCombo {
 			}
 			const rollPosition = hero.Position.Extend(direction, ROLL_PLACE_DISTANCE)
 			if (this.HasStoneNear(rollPosition, ROLL_RADIUS)) {
+				return true
+			}
+			if (this.HasEnemyBeforeStone(hero, rollPosition, ability)) {
 				return true
 			}
 			return this.PlaceAndPend(hero, stoneCaller, rollPosition, order)
@@ -238,6 +243,27 @@ export class EarthSpiritCombo {
 
 	private CanPlaceStone(stoneCaller: earth_spirit_stone_caller): boolean {
 		return stoneCaller.CanBeUsable && stoneCaller.CurrentCharges > 0
+	}
+
+	private HasEnemyBeforeStone(
+		hero: npc_dota_hero_earth_spirit,
+		stonePosition: Vector3,
+		ability: earth_spirit_rolling_boulder
+	): boolean {
+		const start = new Vector2(hero.Position.x, hero.Position.y)
+		const end = new Vector2(stonePosition.x, stonePosition.y)
+		const length = start.Distance(end)
+		const radius = ability.GetBaseAOERadiusForLevel(ability.Level) || ROLL_HIT_RADIUS
+		return EntityManager.GetEntitiesByClass(Hero).some(enemy => {
+			if (!enemy.IsValid || !enemy.IsAlive || !enemy.IsVisible || !enemy.IsEnemy()) {
+				return false
+			}
+			const position = new Vector2(enemy.Position.x, enemy.Position.y)
+			if (position.Distance(start) >= length) {
+				return false
+			}
+			return position.DistanceSegment(start, end, true) <= radius + enemy.HullRadius
+		})
 	}
 
 	private HasStoneNear(position: Vector3, radius: number): boolean {

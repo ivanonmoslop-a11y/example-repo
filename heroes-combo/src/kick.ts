@@ -20,7 +20,7 @@ import { EarthSpiritMenu } from "./menu"
 
 const ENEMY_SEARCH_RADIUS = 900
 const ALLY_SEARCH_RADIUS = 1500
-const TOWER_SEARCH_RADIUS = 1500
+const KICK_DISTANCE_FALLBACK = 600
 const KICK_RADIUS = 180
 const APPROACH_DISTANCE = 120
 const HUG_DISTANCE = 90
@@ -78,7 +78,9 @@ export class KickCombo {
 		if (enemy === undefined) {
 			return
 		}
-		const destination = toAlly ? this.FindAlly(hero, enemy)?.Position : this.FindTower(enemy)?.Position
+		const destination = toAlly
+			? this.FindAlly(hero, enemy)?.Position
+			: this.FindTower(enemy, this.GetKickDistance(smash))?.Position
 		if (destination === undefined) {
 			return
 		}
@@ -147,9 +149,9 @@ export class KickCombo {
 		return target
 	}
 
-	private FindTower(enemy: Hero): Nullable<Tower> {
+	private FindTower(enemy: Hero, kickDistance: number): Nullable<Tower> {
 		let target: Nullable<Tower>
-		let closest = TOWER_SEARCH_RADIUS
+		let closest = Number.MAX_VALUE
 		for (const tower of EntityManager.GetEntitiesByClass(Tower)) {
 			if (!tower.IsValid || !tower.IsAlive || tower.IsEnemy()) {
 				continue
@@ -158,10 +160,21 @@ export class KickCombo {
 			if (distance >= closest) {
 				continue
 			}
+			if (distance > kickDistance + tower.GetAttackRange(enemy)) {
+				continue
+			}
 			closest = distance
 			target = tower
 		}
 		return target
+	}
+
+	private GetKickDistance(smash: earth_spirit_boulder_smash): number {
+		const distance = smash.GetSpecialValue("distance")
+		if (distance > 0) {
+			return distance
+		}
+		return smash.CastRange > 0 ? smash.CastRange : KICK_DISTANCE_FALLBACK
 	}
 
 	private HasCloserUnit(hero: npc_dota_hero_earth_spirit, enemy: Hero): boolean {

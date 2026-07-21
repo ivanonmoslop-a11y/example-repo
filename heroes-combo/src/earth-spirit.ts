@@ -17,7 +17,6 @@ import {
 	Hero,
 	LocalPlayer,
 	npc_dota_hero_earth_spirit,
-	Unit,
 	Vector2,
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
@@ -27,6 +26,7 @@ import { EarthSpiritMenu } from "./menu"
 const MAGNETIZE_MODIFIER = "modifier_earth_spirit_magnetize"
 const SMASH_RADIUS = 200
 const GRIP_RADIUS = 300
+const ALLY_GRIP_RADIUS = 150
 const ROLL_RADIUS = 200
 const ROLL_PLACE_DISTANCE = 250
 const ROLL_HIT_RADIUS = 100
@@ -143,18 +143,15 @@ export class EarthSpiritCombo {
 			if (!this.menu.GeomagneticGrip.value) {
 				return true
 			}
-			if (order.OrderType === dotaunitorder_t.DOTA_UNIT_ORDER_CAST_TARGET) {
-				return true
-			}
 			const target = this.GetOrderPosition(order)
 			if (target === undefined) {
 				return true
 			}
-			const gripRadius = Math.max(ability.GetBaseAOERadiusForLevel(ability.Level), GRIP_RADIUS)
-			if (this.HasStoneNear(target, gripRadius)) {
+			if (this.HasAllyHeroNear(hero, target)) {
 				return true
 			}
-			if (this.HasAllyNear(hero, target, gripRadius)) {
+			const gripRadius = Math.max(ability.GetBaseAOERadiusForLevel(ability.Level), GRIP_RADIUS)
+			if (this.HasStoneNear(target, gripRadius)) {
 				return true
 			}
 			return this.PlaceAndPend(hero, stoneCaller, target, order)
@@ -277,15 +274,14 @@ export class EarthSpiritCombo {
 		})
 	}
 
-	private HasAllyNear(hero: npc_dota_hero_earth_spirit, position: Vector3, radius: number): boolean {
-		return EntityManager.GetEntitiesByClass(Unit).some(
-			unit =>
-				unit !== hero &&
-				unit.IsValid &&
-				unit.IsAlive &&
-				!unit.IsBuilding &&
-				!unit.IsEnemy() &&
-				unit.Distance2D(position) <= radius
+	private HasAllyHeroNear(hero: npc_dota_hero_earth_spirit, position: Vector3): boolean {
+		return EntityManager.GetEntitiesByClass(Hero).some(
+			ally =>
+				ally !== hero &&
+				ally.IsValid &&
+				ally.IsAlive &&
+				!ally.IsEnemy() &&
+				ally.Distance2D(position) <= ALLY_GRIP_RADIUS
 		)
 	}
 

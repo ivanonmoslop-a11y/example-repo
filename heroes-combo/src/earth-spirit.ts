@@ -26,7 +26,9 @@ const MAGNETIZE_MODIFIER = "modifier_earth_spirit_magnetize"
 const SMASH_RADIUS = 200
 const GRIP_RADIUS = 175
 const ROLL_RADIUS = 200
-const MAGNETIZE_EXTEND_TIME = 1.5
+const ROLL_PLACE_DISTANCE = 250
+const MAGNETIZE_EXTEND_TIME = 1
+const MAGNETIZE_RELOCK = 1
 const PLACE_COOLDOWN = 0.25
 const RESEND_DELAY = 0.3
 const STONE_SPAWN_RADIUS = 150
@@ -43,6 +45,7 @@ interface IPendingOrder {
 export class EarthSpiritCombo {
 	private pending: Nullable<IPendingOrder>
 	private lastPlaceTime = 0
+	private readonly magnetizeLocks = new Map<number, number>()
 
 	constructor(private readonly menu: EarthSpiritMenu) {
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
@@ -117,10 +120,15 @@ export class EarthSpiritCombo {
 			if (!this.menu.RollingBoulder.value) {
 				return true
 			}
-			if (this.HasStoneNear(hero.Position, ROLL_RADIUS)) {
+			const direction = this.GetOrderPosition(order)
+			if (direction === undefined || hero.Distance2D(direction) < 1) {
 				return true
 			}
-			return this.PlaceAndPend(hero, stoneCaller, hero.Position, order)
+			const rollPosition = hero.Position.Extend(direction, ROLL_PLACE_DISTANCE)
+			if (this.HasStoneNear(rollPosition, ROLL_RADIUS)) {
+				return true
+			}
+			return this.PlaceAndPend(hero, stoneCaller, rollPosition, order)
 		}
 		if (ability instanceof earth_spirit_geomagnetic_grip) {
 			if (!this.menu.GeomagneticGrip.value) {
@@ -193,6 +201,7 @@ export class EarthSpiritCombo {
 		if (stoneCaller === undefined || !this.CanPlaceStone(stoneCaller)) {
 			return
 		}
+		const now = GameState.RawGameTime
 		let target: Nullable<Hero>
 		let lowest = MAGNETIZE_EXTEND_TIME
 		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
@@ -201,6 +210,9 @@ export class EarthSpiritCombo {
 			}
 			const buff = enemy.GetBuffByName(MAGNETIZE_MODIFIER)
 			if (buff === undefined || buff.RemainingTime > lowest) {
+				continue
+			}
+			if (now - (this.magnetizeLocks.get(enemy.Index) ?? -MAGNETIZE_RELOCK) < MAGNETIZE_RELOCK) {
 				continue
 			}
 			if (hero.Distance2D(enemy) > stoneCaller.CastRange) {
@@ -213,7 +225,8 @@ export class EarthSpiritCombo {
 			return
 		}
 		hero.CastPosition(stoneCaller, target.Position)
-		this.lastPlaceTime = GameState.RawGameTime
+		this.magnetizeLocks.set(target.Index, now)
+		this.lastPlaceTime = now
 	}
 
 	private GetStoneCaller(hero: npc_dota_hero_earth_spirit): Nullable<earth_spirit_stone_caller> {
@@ -259,5 +272,6 @@ export class EarthSpiritCombo {
 	private GameEnded(): void {
 		this.pending = undefined
 		this.lastPlaceTime = 0
+		this.magnetizeLocks.clear()
 	}
 }

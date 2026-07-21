@@ -41,13 +41,55 @@ const ZONE_MERGE_DIST = 200
 const POWERSHOT_NAME = "windrunner_powershot"
 const POWERSHOT_PARTICLE = "windrunner_spell_powershot"
 const POWERSHOT_RADIUS = 125
-const MANTA_IMPACT_PROJECTILES = new Set(["alchemist_unstable_concoction_throw", "huskar_life_break"])
+const GUST_AFTER_NAME = "drow_ranger_wave_of_silence_after"
+const EARTH_SPLITTER_NAME = "elder_titan_earth_splitter"
+const EARTH_SPLITTER_PARTICLE = "elder_titan_earth_splitter"
+const SCREAM_NAME = "queenofpain_scream_of_pain"
+const SCREAM_PARTICLES = ["queen_scream_of_pain", "scream_of_pain"]
+const LAGUNA_PARTICLE = "lina_spell_laguna_blade"
+const AFTER_EFFECT_LIFETIME = 0.2
+const STARBREAKER_DURATION = 1.1
+const LINA_DAMAGE_DELAY = 0.25
+const MANTA_IMPACT_PROJECTILES = new Set([
+	"alchemist_unstable_concoction_throw",
+	"huskar_life_break",
+	"dragon_knight_dragon_tail",
+	"chaos_knight_chaos_bolt",
+	"ogre_magi_ignite",
+	"tidehunter_gush",
+	"skeleton_king_hellfire_blast",
+	"medusa_mystic_snake",
+	"morphling_adaptive_strike_agi",
+	"morphling_adaptive_strike_str",
+	"phantom_lancer_spirit_lance",
+	"phantom_assassin_stifling_dagger",
+	"sniper_assassinate",
+	"vengefulspirit_magic_missile",
+	"viper_viper_strike",
+	"venomancer_noxious_plague",
+	"windrunner_shackleshot",
+	SCREAM_NAME
+])
+
+const TRACKING_PARTICLE_NAMES: ReadonlyMap<string, string> = new Map([
+	["mystic_snake", "medusa_mystic_snake"],
+	["queen_scream", SCREAM_NAME],
+	["scream_of_pain", SCREAM_NAME]
+])
+
+const TARGET_DELAY_MODIFIERS: ReadonlyMap<string, string> = new Map([
+	["modifier_lina_laguna_blade", "lina_laguna_blade"],
+	["modifier_lion_finger_of_death", "lion_finger_of_death"],
+	["modifier_lion_finger_of_death_delay", "lion_finger_of_death"]
+])
 
 const enum AreaMode {
 	Caster,
 	Delayed,
 	Raze,
-	Line
+	Line,
+	Global,
+	Radial
 }
 
 interface AreaDef {
@@ -60,6 +102,8 @@ interface AreaDef {
 	castProximity?: boolean
 	castDetection?: boolean
 	radiusKeys?: string[]
+	speedKeys?: string[]
+	speed?: number
 }
 
 interface CastDef {
@@ -68,12 +112,13 @@ interface CastDef {
 }
 
 const CAST_SPELLS: ReadonlyMap<string, CastDef> = new Map([
-	["lion_finger_of_death", { delayKeys: ["damage_delay", "effect_delay", "delay"], delay: 0.25 }],
-	["lina_laguna_blade", { delayKeys: ["damage_delay", "effect_delay", "delay"], delay: 0.25 }],
+	["lion_finger_of_death", { delay: LINA_DAMAGE_DELAY }],
+	["lina_laguna_blade", { delay: LINA_DAMAGE_DELAY }],
 	["zuus_lightning_bolt", { delayKeys: ["strike_delay", "delay"], delay: 0.35 }]
 ])
 
 const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
+	["earthshaker_fissure", { radius: 150, mode: AreaMode.Line, length: 1400 }],
 	["magnataur_reverse_polarity", { radius: 430, mode: AreaMode.Caster, radiusKeys: ["pull_radius", "push_radius"] }],
 	["enigma_black_hole", { radius: 420, mode: AreaMode.Caster }],
 	["faceless_void_chronosphere", { radius: 450, mode: AreaMode.Caster }],
@@ -106,14 +151,43 @@ const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
 	["pugna_nether_blast", { radius: 350, mode: AreaMode.Line, length: 700, delayKeys: ["delay"], delay: 0.4 }],
 	[
 		"elder_titan_earth_splitter",
-		{ radius: 200, mode: AreaMode.Line, length: 1600, delayKeys: ["crack_time"], delay: 3.3 }
+		{
+			radius: 200,
+			mode: AreaMode.Line,
+			length: 1600,
+			delayKeys: ["crack_time"],
+			delay: 3.3,
+			castDetection: false
+		}
 	],
 	["invoker_sun_strike", { radius: 175, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 1.7 }],
 	["invoker_emp", { radius: 675, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 2.9, castDetection: false }],
 	["kunkka_torrent", { radius: 225, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 1.6 }],
 	["bloodseeker_blood_bath", { radius: 600, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 2.6 }],
 	["kunkka_ghostship", { radius: 425, mode: AreaMode.Delayed }],
-	["lina_light_strike_array", { radius: 225, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 0.5 }],
+	["crystal_maiden_crystal_nova", { radius: 425, mode: AreaMode.Delayed }],
+	["leshrac_split_earth", { radius: 150, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 0.35 }],
+	[
+		"lina_light_strike_array",
+		{
+			radius: 225,
+			mode: AreaMode.Delayed,
+			delayKeys: ["light_strike_array_delay_time", "delay"],
+			delay: 0.5,
+			radiusKeys: ["light_strike_array_aoe"]
+		}
+	],
+	[
+		SCREAM_NAME,
+		{
+			radius: 550,
+			mode: AreaMode.Radial,
+			radiusKeys: ["area_of_effect"],
+			speedKeys: ["projectile_speed"],
+			speed: 900
+		}
+	],
+	["zuus_thundergods_wrath", { radius: 0, mode: AreaMode.Global }],
 	["nevermore_shadowraze1", { radius: 250, mode: AreaMode.Raze, offset: 200 }],
 	["nevermore_shadowraze2", { radius: 250, mode: AreaMode.Raze, offset: 450 }],
 	["nevermore_shadowraze3", { radius: 250, mode: AreaMode.Raze, offset: 700 }]
@@ -126,6 +200,7 @@ const AREA_PARTICLES: ReadonlyMap<string, string> = new Map([
 	["bloodseeker_bloodritual", "bloodseeker_blood_bath"],
 	["blood_rite", "bloodseeker_blood_bath"],
 	["lina_spell_light_strike_array", "lina_light_strike_array"],
+	["leshrac_split_earth", "leshrac_split_earth"],
 	["warlock_rain_of_chaos", "warlock_rain_of_chaos"]
 ])
 
@@ -144,6 +219,37 @@ interface PendingCast {
 	confirmed: boolean
 }
 
+interface AfterEffect {
+	name: string
+	modifier: string
+	expiresAt: number
+}
+
+interface LineZone {
+	index: number
+	name: string
+	start: Vector3
+	end: Vector3
+	radius: number
+	impact: number
+}
+
+interface RadialWave {
+	index: number
+	name: string
+	origin: Vector3
+	radius: number
+	speed: number
+	startedAt: number
+}
+
+interface TargetEffect {
+	name: string
+	modifier: string
+	impact: number
+	expiresAt: number
+}
+
 new (class AutoDodge {
 	private readonly menu = new MenuManager()
 	private readonly slots = CreateSlots()
@@ -156,6 +262,10 @@ new (class AutoDodge {
 	private readonly sleeper = new Sleeper()
 	private readonly handled = new Set<number>()
 	private readonly pendingCasts = new Map<string, PendingCast>()
+	private readonly afterEffects: AfterEffect[] = []
+	private readonly lineZones: LineZone[] = []
+	private readonly radialWaves: RadialWave[] = []
+	private readonly targetEffects: TargetEffect[] = []
 	private readonly zones: {
 		name: string
 		pos: Vector3
@@ -237,8 +347,21 @@ new (class AutoDodge {
 		for (const proj of projs) {
 			alive.add(proj.ID)
 			const lifeBreak = lifeBreaks.find(x => x.CurrentProjectile === proj)
-			const ability = proj.Ability ?? lifeBreak
-			const abilityName = ability?.Name ?? "projectile"
+			const particleName = this.ResolveTrackingParticleName(proj.ParticlePathNoEcon)
+			const rawSource = proj.Source
+			const particleAbility =
+				rawSource instanceof Hero && particleName !== undefined
+					? rawSource.Spells.find((x): x is Ability => x !== undefined && x.Name === particleName)
+					: undefined
+			const impactAbilities =
+				rawSource instanceof Hero
+					? rawSource.Spells.filter(
+							(x): x is Ability => x !== undefined && MANTA_IMPACT_PROJECTILES.has(x.Name)
+					  )
+					: []
+			const sourceAbility = impactAbilities.length === 1 ? impactAbilities[0] : undefined
+			const ability = proj.Ability ?? lifeBreak ?? particleAbility ?? sourceAbility
+			const abilityName = ability?.Name ?? particleName ?? "projectile"
 			const impactDodge = MANTA_IMPACT_PROJECTILES.has(abilityName)
 			if (
 				proj.Target !== hero ||
@@ -249,7 +372,7 @@ new (class AutoDodge {
 			) {
 				continue
 			}
-			const source = proj.Source ?? ability?.Owner
+			const source = ability?.Owner ?? rawSource
 			if (!(source instanceof Unit) || !source.IsEnemy(hero)) {
 				continue
 			}
@@ -270,9 +393,16 @@ new (class AutoDodge {
 				this.handled.delete(id)
 			}
 		}
-		this.PowershotDanger(hero, found)
+		this.LinearProjectileDanger(hero, found)
 		this.BlastOffDanger(hero, found)
 		this.CentaurStompDanger(hero, found)
+		this.StarbreakerDanger(hero, found)
+		this.SolarGuardianDanger(hero, found)
+		this.CookieDanger(hero, found)
+		this.AfterEffectDanger(hero, found)
+		this.TargetEffectDanger(hero, found)
+		this.LineZoneDanger(hero, found)
+		this.RadialWaveDanger(hero, found)
 		const enemies = EntityManager.GetEntitiesByClass(Hero)
 		for (const enemy of enemies) {
 			if (!enemy.IsEnemy(hero) || !enemy.IsValid || !enemy.IsAlive || !enemy.IsVisible || enemy.IsIllusion) {
@@ -299,7 +429,16 @@ new (class AutoDodge {
 		return distance / Math.max(speed - movingAway, 1)
 	}
 
-	private PowershotDanger(hero: Hero, found: Danger[]): void {
+	private ResolveTrackingParticleName(path: string): Nullable<string> {
+		for (const [needle, name] of TRACKING_PARTICLE_NAMES) {
+			if (path.includes(needle)) {
+				return name
+			}
+		}
+		return undefined
+	}
+
+	private LinearProjectileDanger(hero: Hero, found: Danger[]): void {
 		for (const proj of ProjectileManager.AllLinearProjectiles) {
 			if (!proj.IsValid || !proj.Position.IsValid) {
 				continue
@@ -308,18 +447,21 @@ new (class AutoDodge {
 			if (!(source instanceof Unit) || !source.IsEnemy(hero)) {
 				continue
 			}
+			const pathName = proj.ParticlePathNoEcon.includes(POWERSHOT_PARTICLE) ? POWERSHOT_NAME : undefined
 			const ability =
 				proj.Ability ??
-				(source instanceof Hero
-					? source.Spells.find((x): x is Ability => x !== undefined && x.Name === POWERSHOT_NAME)
+				(source instanceof Hero && pathName !== undefined
+					? source.Spells.find((x): x is Ability => x !== undefined && x.Name === pathName)
 					: undefined)
-			if (ability?.Name !== POWERSHOT_NAME && !proj.ParticlePathNoEcon.includes(POWERSHOT_PARTICLE)) {
+			const isPowershot = ability?.Name === POWERSHOT_NAME || proj.ParticlePathNoEcon.includes(POWERSHOT_PARTICLE)
+			if (!isPowershot) {
 				continue
 			}
 			const dx = hero.Position.x - proj.Position.x
 			const dy = hero.Position.y - proj.Position.y
 			const along = dx * proj.Forward.x + dy * proj.Forward.y
-			const radius = Math.max(ability?.AOERadius ?? 0, POWERSHOT_RADIUS) + hero.HullRadius
+			const spellRadius = Math.max(ability?.AOERadius ?? 0, POWERSHOT_RADIUS)
+			const radius = spellRadius + hero.HullRadius
 			const remaining = Math.max(proj.Distance - proj.Position.Distance2D(proj.Origin), 0)
 			if (along < -hero.HullRadius || along > remaining + radius) {
 				continue
@@ -361,7 +503,8 @@ new (class AutoDodge {
 				ability.TargetPosition,
 				Math.max(ability.AOERadius, 400),
 				timeLeft,
-				"blast-off"
+				"blast-off",
+				false
 			)
 		}
 	}
@@ -387,9 +530,193 @@ new (class AutoDodge {
 				enemy.Position,
 				Math.max(ability?.AOERadius ?? 0, 325),
 				timeLeft,
-				"windup"
+				"windup",
+				false
 			)
 		}
+	}
+
+	private StarbreakerDanger(hero: Hero, found: Danger[]): void {
+		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
+			if (!enemy.IsValid || !enemy.IsAlive || !enemy.IsEnemy(hero)) {
+				continue
+			}
+			const buff = enemy.GetBuffByName("modifier_dawnbreaker_fire_wreath_caster")
+			if (buff === undefined) {
+				continue
+			}
+			const ability =
+				buff.Ability ??
+				enemy.Spells.find((x): x is Ability => x !== undefined && x.Name === "dawnbreaker_fire_wreath")
+			const duration = Math.max(
+				ability?.GetSpecialValue("duration") ?? 0,
+				ability?.GetSpecialValue("total_duration") ?? 0,
+				buff.Duration > 0 ? buff.Duration : 0,
+				STARBREAKER_DURATION
+			)
+			const timeLeft = Math.max(duration - buff.ElapsedTime, 0)
+			this.AddTimedAreaDanger(
+				hero,
+				found,
+				"dawnbreaker_fire_wreath",
+				enemy.Position,
+				Math.max(
+					ability?.AOERadius ?? 0,
+					ability?.GetSpecialValue("smash_radius") ?? 0,
+					ability?.GetSpecialValue("swipe_radius") ?? 0,
+					300
+				),
+				timeLeft,
+				"starbreaker-smash",
+				false
+			)
+		}
+	}
+
+	private SolarGuardianDanger(hero: Hero, found: Danger[]): void {
+		const now = GameState.RawGameTime
+		for (const marker of EntityManager.GetEntitiesByClass(Unit)) {
+			const buff = marker.GetBuffByName("modifier_dawnbreaker_solar_guardian_thinker")
+			const ability = buff?.Ability
+			const caster = buff?.Caster
+			if (buff === undefined || !(caster instanceof Unit) || !caster.IsEnemy(hero)) {
+				continue
+			}
+			let channel = ability?.MaxChannelTime ?? 1.7
+			let airtime = ability?.GetSpecialValue("airtime_duration") || 0.8
+			if (ability?.OwnerHasScepter) {
+				channel = ability.GetSpecialValue("scepter_channel_time") || channel
+				airtime = ability.GetSpecialValue("airtime_scepter_bonus") || airtime
+			}
+			const total = channel + airtime
+			const timeLeft = Math.max(buff.CreationTime + total - now, 0)
+			this.AddTimedAreaDanger(
+				hero,
+				found,
+				"dawnbreaker_solar_guardian",
+				marker.Position,
+				Math.max(ability?.AOERadius ?? 0, ability?.GetSpecialValue("radius") ?? 0, 400),
+				timeLeft,
+				"solar-landing",
+				false
+			)
+		}
+	}
+
+	private CookieDanger(hero: Hero, found: Danger[]): void {
+		for (const unit of EntityManager.GetEntitiesByClass(Unit)) {
+			const buff = unit.GetBuffByName("modifier_snapfire_firesnap_cookie_short_hop")
+			const ability = buff?.Ability
+			const caster = buff?.Caster
+			if (buff === undefined || buff.RemainingTime <= 0 || !(caster instanceof Unit) || !caster.IsEnemy(hero)) {
+				continue
+			}
+			this.AddTimedAreaDanger(
+				hero,
+				found,
+				"snapfire_firesnap_cookie",
+				unit.Position,
+				Math.max(ability?.AOERadius ?? 0, ability?.GetSpecialValue("impact_radius") ?? 0, 300),
+				buff.RemainingTime,
+				"cookie-landing",
+				false
+			)
+		}
+	}
+
+	private AfterEffectDanger(hero: Hero, found: Danger[]): void {
+		const now = GameState.RawGameTime
+		for (let i = this.afterEffects.length - 1; i > -1; i--) {
+			const effect = this.afterEffects[i]
+			if (now > effect.expiresAt || !hero.HasBuffByName(effect.modifier)) {
+				this.afterEffects.splice(i, 1)
+				continue
+			}
+			found.push({ kind: DangerKind.Cast, name: effect.name, timeLeft: 0.01, route: "after-effect" })
+		}
+	}
+
+	private TargetEffectDanger(hero: Hero, found: Danger[]): void {
+		const now = GameState.RawGameTime
+		for (let i = this.targetEffects.length - 1; i > -1; i--) {
+			const effect = this.targetEffects[i]
+			if (now > effect.expiresAt) {
+				this.targetEffects.splice(i, 1)
+				continue
+			}
+			if (now > effect.impact && !hero.HasBuffByName(effect.modifier)) {
+				continue
+			}
+			found.push({
+				kind: DangerKind.Cast,
+				name: effect.name,
+				timeLeft: Math.max(effect.impact - now, 0),
+				route: "target-modifier"
+			})
+		}
+	}
+
+	private LineZoneDanger(hero: Hero, found: Danger[]): void {
+		const now = GameState.RawGameTime
+		for (let i = this.lineZones.length - 1; i > -1; i--) {
+			const line = this.lineZones[i]
+			if (now > line.impact) {
+				this.lineZones.splice(i, 1)
+				continue
+			}
+			if (this.DistanceToSegment(hero.Position, line.start, line.end) > line.radius + hero.HullRadius) {
+				continue
+			}
+			found.push({
+				kind: DangerKind.AreaCast,
+				name: line.name,
+				timeLeft: line.impact - now,
+				route: "particle-line"
+			})
+		}
+	}
+
+	private RadialWaveDanger(hero: Hero, found: Danger[]): void {
+		const now = GameState.RawGameTime
+		for (let i = this.radialWaves.length - 1; i > -1; i--) {
+			const wave = this.radialWaves[i]
+			const elapsed = Math.max(now - wave.startedAt, 0)
+			const lifetime = (wave.radius + hero.HullRadius) / wave.speed + 0.2
+			if (elapsed > lifetime) {
+				this.radialWaves.splice(i, 1)
+				continue
+			}
+			const distance = wave.origin.Distance2D(hero.Position)
+			if (distance > wave.radius + hero.HullRadius) {
+				continue
+			}
+			const remaining = distance - hero.HullRadius - elapsed * wave.speed
+			if (remaining < 0) {
+				continue
+			}
+			found.push({
+				kind: DangerKind.AreaCast,
+				name: wave.name,
+				timeLeft: remaining / wave.speed,
+				route: "radial-wave"
+			})
+		}
+	}
+
+	private DistanceToSegment(point: Vector3, start: Vector3, end: Vector3): number {
+		const dx = end.x - start.x
+		const dy = end.y - start.y
+		const lengthSq = dx * dx + dy * dy
+		if (lengthSq <= 1) {
+			return point.Distance2D(start)
+		}
+		const projection = ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq
+		const clamped = Math.max(0, Math.min(projection, 1))
+		const closestX = start.x + dx * clamped
+		const closestY = start.y + dy * clamped
+		const pointDx = point.x - closestX
+		const pointDy = point.y - closestY
+		return Math.sqrt(pointDx * pointDx + pointDy * pointDy)
 	}
 
 	private AddTimedAreaDanger(
@@ -399,9 +726,12 @@ new (class AutoDodge {
 		position: Vector3,
 		radius: number,
 		timeLeft: number,
-		route: string
+		route: string,
+		persist = true
 	): void {
-		this.AddZone(name, position.Clone(), radius, GameState.RawGameTime + timeLeft, route)
+		if (persist) {
+			this.AddZone(name, position.Clone(), radius, GameState.RawGameTime + timeLeft, route)
+		}
 		if (position.Distance2D(hero.Position) > radius + hero.HullRadius) {
 			return
 		}
@@ -450,21 +780,34 @@ new (class AutoDodge {
 					if (!detected) {
 						continue
 					}
-					const areaLeft = castLeft + this.ResolveDelay(abil, abil.Name, area.delayKeys, area.delay)
-					const route = area.mode === AreaMode.Delayed ? "cast~" : "cast"
+					let areaLeft = castLeft + this.ResolveDelay(abil, abil.Name, area.delayKeys, area.delay)
+					if (area.mode === AreaMode.Radial) {
+						const speed = this.ResolveDelay(abil, abil.Name, area.speedKeys, area.speed)
+						areaLeft += enemy.Distance2D(hero) / Math.max(speed, 1)
+					}
+					const route =
+						area.mode === AreaMode.Delayed
+							? "cast~"
+							: area.mode === AreaMode.Radial
+							? "cast-radial"
+							: "cast"
 					found.push({
 						kind: DangerKind.AreaCast,
 						name: abil.Name,
 						timeLeft: areaLeft,
 						route
 					})
-					if (area.mode === AreaMode.Delayed || area.mode === AreaMode.Line) {
+					if (
+						area.mode === AreaMode.Delayed ||
+						area.mode === AreaMode.Line ||
+						area.mode === AreaMode.Radial
+					) {
 						this.AddZone(
 							abil.Name,
 							hero.Position.Clone(),
 							radius,
 							GameState.RawGameTime + areaLeft,
-							area.mode === AreaMode.Delayed ? "cast~" : "line",
+							route,
 							castKey
 						)
 					}
@@ -537,6 +880,9 @@ new (class AutoDodge {
 	}
 
 	private InArea(enemy: Hero, hero: Hero, area: AreaDef): boolean {
+		if (area.mode === AreaMode.Global) {
+			return true
+		}
 		const limit = area.radius + hero.HullRadius
 		if (area.mode === AreaMode.Line) {
 			return this.InLine(enemy, hero, area, limit)
@@ -568,6 +914,44 @@ new (class AutoDodge {
 	}
 
 	private ModifierCreated(buff: Modifier): void {
+		const hero = this.Hero
+		const caster = buff.Caster
+		const delayedTarget = TARGET_DELAY_MODIFIERS.get(buff.Name)
+		if (
+			hero !== undefined &&
+			buff.Parent === hero &&
+			delayedTarget !== undefined &&
+			caster instanceof Unit &&
+			caster.IsEnemy(hero)
+		) {
+			const targetDelay = buff.RemainingTime > 0 ? buff.RemainingTime : LINA_DAMAGE_DELAY
+			const impact = GameState.RawGameTime + targetDelay
+			const known = this.targetEffects.find(x => x.name === delayedTarget && x.expiresAt >= GameState.RawGameTime)
+			if (known === undefined) {
+				this.targetEffects.push({
+					name: delayedTarget,
+					modifier: buff.Name,
+					impact,
+					expiresAt: impact + 0.1
+				})
+			} else {
+				known.impact = Math.min(known.impact, impact)
+				known.expiresAt = Math.max(known.expiresAt, impact + 0.1)
+			}
+		}
+		if (
+			hero !== undefined &&
+			buff.Parent === hero &&
+			buff.Name === "modifier_drowranger_wave_of_silence" &&
+			caster instanceof Unit &&
+			caster.IsEnemy(hero)
+		) {
+			this.afterEffects.push({
+				name: GUST_AFTER_NAME,
+				modifier: buff.Name,
+				expiresAt: GameState.RawGameTime + AFTER_EFFECT_LIFETIME
+			})
+		}
 		const abilName = buff.Ability?.Name ?? AbilityNameFromModifier(buff.Name)
 		const area = AREA_SPELLS.get(abilName)
 		if (area === undefined || area.mode !== AreaMode.Delayed) {
@@ -577,7 +961,6 @@ new (class AutoDodge {
 		if (parent === undefined || !parent.IsValid) {
 			return
 		}
-		const caster = buff.Caster
 		if (caster instanceof Unit && !caster.IsEnemy()) {
 			return
 		}
@@ -592,6 +975,9 @@ new (class AutoDodge {
 	}
 
 	private OnParticle(particle: NetworkedParticle): void {
+		this.UpdateLagunaEffect(particle)
+		this.UpdateEarthSplitterLine(particle)
+		this.UpdateScreamWave(particle)
 		const abilName = particle.Ability?.Name ?? this.ResolveParticleArea(particle.PathNoEcon)
 		if (abilName === undefined) {
 			return
@@ -600,11 +986,16 @@ new (class AutoDodge {
 		if (area === undefined || area.mode !== AreaMode.Delayed) {
 			return
 		}
-		const source = particle.Source ?? particle.AttachedTo
+		const source = particle.Ability?.Owner ?? particle.Source ?? particle.AttachedTo
 		if (source instanceof Unit && !source.IsEnemy()) {
 			return
 		}
-		const pos = this.ControlPoint(particle, 0)
+		const attachedPos = particle.AttachedTo instanceof Unit ? particle.AttachedTo.Position : undefined
+		const modifierPos =
+			particle.ModifiersAttachedTo instanceof Unit ? particle.ModifiersAttachedTo.Position : undefined
+		const pos =
+			this.ControlPoint(particle, 0) ??
+			(attachedPos?.IsValid === true ? attachedPos : modifierPos?.IsValid === true ? modifierPos : undefined)
 		if (pos === undefined) {
 			return
 		}
@@ -616,6 +1007,116 @@ new (class AutoDodge {
 			GameState.RawGameTime + delay,
 			"part"
 		)
+	}
+
+	private UpdateLagunaEffect(particle: NetworkedParticle): void {
+		const ability = particle.Ability
+		if (ability?.Name !== "lina_laguna_blade" && !particle.PathNoEcon.includes(LAGUNA_PARTICLE)) {
+			return
+		}
+		const hero = this.Hero
+		const caster = ability?.Owner ?? particle.Source
+		if (hero === undefined || particle.Target !== hero || !(caster instanceof Unit) || !caster.IsEnemy(hero)) {
+			return
+		}
+		const now = GameState.RawGameTime
+		const impact = now + LINA_DAMAGE_DELAY
+		const known = this.targetEffects.find(x => x.name === "lina_laguna_blade" && x.expiresAt >= now)
+		if (known === undefined) {
+			this.targetEffects.push({
+				name: "lina_laguna_blade",
+				modifier: "modifier_lina_laguna_blade",
+				impact,
+				expiresAt: impact + 0.1
+			})
+			return
+		}
+		known.impact = Math.min(known.impact, impact)
+		known.expiresAt = Math.max(known.expiresAt, impact + 0.1)
+	}
+
+	private UpdateEarthSplitterLine(particle: NetworkedParticle): void {
+		const ability = particle.Ability
+		if (ability?.Name !== EARTH_SPLITTER_NAME && !particle.PathNoEcon.includes(EARTH_SPLITTER_PARTICLE)) {
+			return
+		}
+		const source = ability?.Owner ?? particle.Source ?? particle.AttachedTo
+		if (!(source instanceof Unit) || !source.IsEnemy()) {
+			return
+		}
+		const points = [...particle.ControlPoints.values(), ...particle.ControlPointsFallback.values()].filter(
+			x => x.IsValid
+		)
+		if (points.length === 0) {
+			return
+		}
+		const cp0 = this.ControlPoint(particle, 0)
+		const cp1 = this.ControlPoint(particle, 1)
+		let start = cp0 ?? source.Position
+		let end = cp1 ?? points[0]
+		let longest = start.Distance2D(end)
+		if (cp0 === undefined || cp1 === undefined || longest < 32) {
+			for (let i = 0; i < points.length; i++) {
+				for (let j = i + 1; j < points.length; j++) {
+					const distance = points[i].Distance2D(points[j])
+					if (distance > longest) {
+						start = points[i]
+						end = points[j]
+						longest = distance
+					}
+				}
+			}
+		}
+		if (longest < 32) {
+			return
+		}
+		const radius = Math.max(ability?.AOERadius ?? 0, ability?.GetSpecialValue("crack_width") ?? 0, 200)
+		const known = this.lineZones.find(x => x.index === particle.Index)
+		if (known !== undefined) {
+			known.start = start.Clone()
+			known.end = end.Clone()
+			known.radius = radius
+			return
+		}
+		const delay = this.ResolveDelay(ability, EARTH_SPLITTER_NAME, ["crack_time"], 3.3)
+		this.lineZones.push({
+			index: particle.Index,
+			name: EARTH_SPLITTER_NAME,
+			start: start.Clone(),
+			end: end.Clone(),
+			radius,
+			impact: GameState.RawGameTime + delay
+		})
+	}
+
+	private UpdateScreamWave(particle: NetworkedParticle): void {
+		if (!SCREAM_PARTICLES.some(x => particle.PathNoEcon.includes(x))) {
+			return
+		}
+		const ability = particle.Ability
+		const caster = ability?.Owner ?? particle.Source
+		if (!(caster instanceof Unit) || !caster.IsEnemy()) {
+			return
+		}
+		const attached = particle.AttachedTo ?? particle.ModifiersAttachedTo
+		const origin = attached instanceof Unit ? attached.Position : caster.Position
+		const radius = Math.max(ability?.AOERadius ?? 0, ability?.GetSpecialValue("area_of_effect") ?? 0, 550)
+		const speed = Math.max(ability?.Speed ?? 0, ability?.GetSpecialValue("projectile_speed") ?? 0, 900)
+		const known = this.radialWaves.find(x => x.index === particle.Index)
+		if (known !== undefined) {
+			known.origin = origin.Clone()
+			known.radius = radius
+			known.speed = speed
+			return
+		}
+		this.radialWaves.push({
+			index: particle.Index,
+			name: SCREAM_NAME,
+			origin: origin.Clone(),
+			radius,
+			speed,
+			startedAt: GameState.RawGameTime
+		})
 	}
 
 	private ResolveParticleArea(path: string): Nullable<string> {
@@ -826,6 +1327,10 @@ new (class AutoDodge {
 		this.handled.clear()
 		this.zones.length = 0
 		this.pendingCasts.clear()
+		this.afterEffects.length = 0
+		this.lineZones.length = 0
+		this.radialWaves.length = 0
+		this.targetEffects.length = 0
 		this.debugText = ""
 		this.panel.Reset()
 		this.escape.Reset()

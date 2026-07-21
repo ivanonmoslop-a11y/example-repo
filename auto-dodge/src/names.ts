@@ -4,6 +4,7 @@ const TRIM_SUFFIXES = ["_thinker", "_debuff", "_stun", "_slow", "_burn", "_disar
 
 const MODIFIER_ALIASES: ReadonlyMap<string, string> = new Map([
 	["bloodseeker_bloodbath", "bloodseeker_blood_bath"],
+	["drowranger_wave_of_silence", "drow_ranger_wave_of_silence"],
 	["warlock_golem_permanent_immolation_debuff", "warlock_rain_of_chaos"],
 	["sandking_impale", "sandking_burrowstrike"]
 ])

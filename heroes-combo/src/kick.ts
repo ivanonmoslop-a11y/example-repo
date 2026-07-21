@@ -21,8 +21,7 @@ const ENEMY_SEARCH_RADIUS = 900
 const ALLY_SEARCH_RADIUS = 1500
 const TOWER_SEARCH_RADIUS = 1500
 const KICK_RADIUS = 180
-const KICK_OFFSET = 140
-const ANGLE_TOLERANCE = 0.3
+const APPROACH_DISTANCE = 120
 const BLINK_MIN_DISTANCE = 350
 const ORDER_COOLDOWN = 0.1
 
@@ -80,9 +79,9 @@ export class KickCombo {
 		if (destination === undefined) {
 			return
 		}
-		if (this.InPosition(hero, enemy, destination)) {
+		if (hero.Distance2D(enemy) <= KICK_RADIUS) {
 			if (smash.CanBeCasted()) {
-				hero.CastTarget(smash, enemy)
+				hero.CastPosition(smash, this.ClampToRange(hero, destination, smash.CastRange))
 			}
 			return
 		}
@@ -91,13 +90,13 @@ export class KickCombo {
 			return
 		}
 		this.lastOrderTime = now
-		const kickPosition = enemy.Position.Extend(destination, -KICK_OFFSET)
+		const approach = enemy.Position.Extend(hero.Position, APPROACH_DISTANCE)
 		const blink = this.GetBlink(hero)
-		if (blink !== undefined && hero.Distance2D(kickPosition) > BLINK_MIN_DISTANCE) {
-			hero.CastPosition(blink, this.ClampToRange(hero, kickPosition, blink.CastRange))
+		if (blink !== undefined && hero.Distance2D(approach) > BLINK_MIN_DISTANCE) {
+			hero.CastPosition(blink, this.ClampToRange(hero, approach, blink.CastRange))
 			return
 		}
-		hero.MoveTo(kickPosition)
+		hero.MoveTo(approach)
 	}
 
 	private FindEnemy(hero: npc_dota_hero_earth_spirit): Nullable<Hero> {
@@ -156,21 +155,6 @@ export class KickCombo {
 			target = tower
 		}
 		return target
-	}
-
-	private InPosition(hero: npc_dota_hero_earth_spirit, enemy: Hero, destination: Vector3): boolean {
-		if (hero.Distance2D(enemy) > KICK_RADIUS) {
-			return false
-		}
-		const heroPosition = hero.Position
-		const enemyPosition = enemy.Position
-		const kickAngle = Math.atan2(enemyPosition.y - heroPosition.y, enemyPosition.x - heroPosition.x)
-		const destinationAngle = Math.atan2(destination.y - enemyPosition.y, destination.x - enemyPosition.x)
-		let difference = Math.abs(kickAngle - destinationAngle)
-		if (difference > Math.PI) {
-			difference = 2 * Math.PI - difference
-		}
-		return difference <= ANGLE_TOLERANCE
 	}
 
 	private GetBlink(hero: npc_dota_hero_earth_spirit): Nullable<Item> {

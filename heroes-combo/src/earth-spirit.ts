@@ -17,6 +17,7 @@ import {
 	Hero,
 	LocalPlayer,
 	npc_dota_hero_earth_spirit,
+	Unit,
 	Vector2,
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
@@ -147,7 +148,7 @@ export class EarthSpiritCombo {
 			if (target === undefined) {
 				return true
 			}
-			if (this.HasAllyHeroNear(hero, target)) {
+			if (this.HasAllyNear(hero, target)) {
 				return true
 			}
 			const gripRadius = Math.max(ability.GetBaseAOERadiusForLevel(ability.Level), GRIP_RADIUS)
@@ -274,14 +275,15 @@ export class EarthSpiritCombo {
 		})
 	}
 
-	private HasAllyHeroNear(hero: npc_dota_hero_earth_spirit, position: Vector3): boolean {
-		return EntityManager.GetEntitiesByClass(Hero).some(
-			ally =>
-				ally !== hero &&
-				ally.IsValid &&
-				ally.IsAlive &&
-				!ally.IsEnemy() &&
-				ally.Distance2D(position) <= ALLY_GRIP_RADIUS
+	private HasAllyNear(hero: npc_dota_hero_earth_spirit, position: Vector3): boolean {
+		return EntityManager.GetEntitiesByClass(Unit).some(
+			unit =>
+				unit !== hero &&
+				unit.IsValid &&
+				unit.IsAlive &&
+				!unit.IsBuilding &&
+				!unit.IsEnemy() &&
+				unit.Distance2D(position) <= ALLY_GRIP_RADIUS
 		)
 	}
 

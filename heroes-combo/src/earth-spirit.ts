@@ -76,7 +76,7 @@ export class EarthSpiritCombo {
 	}
 
 	private get Enabled(): boolean {
-		return this.menu.State.value && this.menu.AutoRemnant.value && this.InGame
+		return this.menu.State.value && this.menu.AutoRemnant.value && !this.menu.ComboKey.isPressed && this.InGame
 	}
 
 	private PostDataUpdate(): void {

@@ -1,4 +1,6 @@
-import { ImageData, Menu } from "github.com/octarine-public/wrapper/index"
+import { AbilityData, ImageData, Menu } from "github.com/octarine-public/wrapper/index"
+
+AbilityData.ShouldBeDrawable.add("earth_spirit_stone_caller")
 
 const COMBO_ABILITIES = [
 	"earth_spirit_stone_caller",

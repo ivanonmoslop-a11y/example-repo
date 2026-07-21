@@ -1,5 +1,6 @@
 import {
 	Ability,
+	Color,
 	DOTAGameState,
 	DOTAGameUIState,
 	earth_spirit_boulder_smash,
@@ -16,6 +17,7 @@ import {
 	InputManager,
 	LocalPlayer,
 	npc_dota_hero_earth_spirit,
+	ParticlesSDK,
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
@@ -23,14 +25,20 @@ import { EarthSpiritMenu } from "./menu"
 
 const MAGNETIZE_MODIFIER = "modifier_earth_spirit_magnetize"
 const PETRIFY_ABILITY = "earth_spirit_petrify"
-const COMBO_RADIUS = 900
 const CAST_GAP = 0.25
+const ATTACK_GAP = 0.3
 const STONE_NEAR_RADIUS = 220
+const GRIP_STONE_BEHIND = 150
 const ROLL_PLACE_DISTANCE = 250
-const RANGE_BUFFER = 150
+const ROLL_SPEED_FALLBACK = 1600
+const RANGE_BUFFER = 100
+const TARGET_RING_KEY = "heroes_combo_target"
+const TARGET_RING_COLOR = new Color(80, 220, 120)
 
 export class ComboManager {
+	private readonly particles = new ParticlesSDK()
 	private nextCastTime = 0
+	private lastAttackTime = 0
 
 	constructor(private readonly menu: EarthSpiritMenu) {
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
@@ -56,18 +64,17 @@ export class ComboManager {
 	}
 
 	private PostDataUpdate(): void {
-		if (!this.menu.State.value || !this.menu.ComboKey.isPressed || !this.InGame) {
+		const hero = this.Hero
+		if (!this.menu.State.value || !this.menu.ComboKey.isPressed || !this.InGame || hero === undefined) {
+			this.ClearTarget()
 			return
 		}
-		const hero = this.Hero
-		if (hero === undefined || hero.IsStunned) {
+		const enemy = this.FindEnemy()
+		this.DrawTarget(enemy)
+		if (hero.IsStunned || enemy === undefined) {
 			return
 		}
 		if (GameState.RawGameTime < this.nextCastTime) {
-			return
-		}
-		const enemy = this.FindEnemy(hero)
-		if (enemy === undefined) {
 			return
 		}
 		this.Execute(hero, enemy)
@@ -81,33 +88,44 @@ export class ComboManager {
 		const magnetize = hero.GetAbilityByClass(earth_spirit_magnetize)
 		const petrify = hero.GetAbilityByName(PETRIFY_ABILITY)
 
-		if (this.Enabled("earth_spirit_geomagnetic_grip") && this.Ready(grip)) {
-			if (!this.HasStoneNear(enemy.Position, STONE_NEAR_RADIUS)) {
-				if (this.PlaceStone(hero, stone, enemy.Position)) {
+		if (this.Enabled("earth_spirit_geomagnetic_grip") && this.Ready(grip) && this.InRange(hero, grip!, enemy)) {
+			const behind = hero.Position.Extend(enemy.Position, hero.Distance2D(enemy) + GRIP_STONE_BEHIND)
+			if (!this.HasStoneNear(behind, STONE_NEAR_RADIUS)) {
+				if (this.PlaceStone(hero, stone, behind)) {
 					return
 				}
-			} else if (this.InRange(hero, grip!, enemy)) {
+			} else {
 				this.Cast(hero, grip!, enemy.Position)
 				return
 			}
 		}
 
-		if (this.Enabled("earth_spirit_rolling_boulder") && this.Ready(rolling)) {
-			const rollPosition = hero.Position.Extend(enemy.Position, ROLL_PLACE_DISTANCE)
-			if (!this.HasStoneNear(rollPosition, STONE_NEAR_RADIUS)) {
-				if (this.PlaceStone(hero, stone, rollPosition)) {
+		if (
+			this.Enabled("earth_spirit_rolling_boulder") &&
+			this.Ready(rolling) &&
+			this.InRange(hero, rolling!, enemy)
+		) {
+			const aim = this.PredictRoll(hero, rolling!, enemy)
+			const rollStone = hero.Position.Extend(aim, ROLL_PLACE_DISTANCE)
+			if (!this.HasStoneNear(rollStone, STONE_NEAR_RADIUS)) {
+				if (this.PlaceStone(hero, stone, rollStone)) {
 					return
 				}
-			} else if (this.InRange(hero, rolling!, enemy)) {
-				this.Cast(hero, rolling!, enemy.Position)
+			} else {
+				this.Cast(hero, rolling!, aim)
 				return
 			}
 		}
 
 		if (this.Enabled("earth_spirit_boulder_smash") && this.Ready(smash) && this.InRange(hero, smash!, enemy)) {
-			hero.CastTarget(smash!, enemy)
-			this.nextCastTime = GameState.RawGameTime + CAST_GAP
-			return
+			if (!this.HasStoneNear(hero.Position, STONE_NEAR_RADIUS)) {
+				if (this.PlaceStone(hero, stone, hero.Position)) {
+					return
+				}
+			} else {
+				this.Cast(hero, smash!, enemy.Position)
+				return
+			}
 		}
 
 		if (
@@ -128,10 +146,31 @@ export class ComboManager {
 		) {
 			hero.CastTarget(petrify, enemy)
 			this.nextCastTime = GameState.RawGameTime + CAST_GAP
+			return
 		}
+
+		this.Attack(hero, enemy)
 	}
 
-	private FindEnemy(hero: npc_dota_hero_earth_spirit): Nullable<Hero> {
+	private Attack(hero: npc_dota_hero_earth_spirit, enemy: Hero): void {
+		const now = GameState.RawGameTime
+		if (now - this.lastAttackTime < ATTACK_GAP) {
+			return
+		}
+		this.lastAttackTime = now
+		hero.AttackTarget(enemy)
+	}
+
+	private PredictRoll(hero: npc_dota_hero_earth_spirit, rolling: earth_spirit_rolling_boulder, enemy: Hero): Vector3 {
+		if (!enemy.IsMoving) {
+			return enemy.Position
+		}
+		const speed = rolling.GetBaseSpeedForLevel(rolling.Level) || ROLL_SPEED_FALLBACK
+		const delay = hero.Distance2D(enemy) / speed + rolling.GetBaseActivationDelayForLevel(rolling.Level)
+		return enemy.VelocityWaypoint(delay)
+	}
+
+	private FindEnemy(): Nullable<Hero> {
 		const cursor = InputManager.CursorOnWorld
 		let target: Nullable<Hero>
 		let closest = Number.MAX_VALUE
@@ -139,7 +178,7 @@ export class ComboManager {
 			if (!enemy.IsValid || !enemy.IsAlive || !enemy.IsVisible || !enemy.IsEnemy()) {
 				continue
 			}
-			if (enemy.IsIllusion || hero.Distance2D(enemy) > COMBO_RADIUS) {
+			if (enemy.IsIllusion) {
 				continue
 			}
 			const distance = enemy.Distance2D(cursor)
@@ -201,8 +240,22 @@ export class ComboManager {
 		return hero.Position.Extend(position, range)
 	}
 
+	private DrawTarget(enemy: Nullable<Hero>): void {
+		if (enemy === undefined) {
+			this.ClearTarget()
+			return
+		}
+		this.particles.DrawSelectedRing(TARGET_RING_KEY, enemy, enemy.HullRadius + 40, enemy, TARGET_RING_COLOR)
+	}
+
+	private ClearTarget(): void {
+		this.particles.DestroyByKey(TARGET_RING_KEY)
+	}
+
 	private GameEnded(): void {
 		this.menu.ComboKey.isPressed = false
 		this.nextCastTime = 0
+		this.lastAttackTime = 0
+		this.ClearTarget()
 	}
 }

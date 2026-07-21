@@ -12,6 +12,7 @@ import {
 	LocalPlayer,
 	npc_dota_hero_earth_spirit,
 	Tower,
+	Unit,
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
@@ -22,6 +23,8 @@ const ALLY_SEARCH_RADIUS = 1500
 const TOWER_SEARCH_RADIUS = 1500
 const KICK_RADIUS = 180
 const APPROACH_DISTANCE = 120
+const HUG_DISTANCE = 90
+const CROWD_RADIUS = 250
 const BLINK_MIN_DISTANCE = 350
 const ORDER_COOLDOWN = 0.1
 
@@ -79,7 +82,7 @@ export class KickCombo {
 		if (destination === undefined) {
 			return
 		}
-		if (hero.Distance2D(enemy) <= KICK_RADIUS) {
+		if (hero.Distance2D(enemy) <= KICK_RADIUS && !this.HasCloserUnit(hero, enemy)) {
 			if (smash.CanBeCasted()) {
 				hero.CastPosition(smash, this.ClampToRange(hero, destination, smash.CastRange))
 			}
@@ -90,7 +93,11 @@ export class KickCombo {
 			return
 		}
 		this.lastOrderTime = now
-		const approach = enemy.Position.Extend(hero.Position, APPROACH_DISTANCE)
+		const crowder = this.FindCrowder(hero, enemy)
+		const approach =
+			crowder !== undefined
+				? enemy.Position.Extend(crowder.Position, -HUG_DISTANCE)
+				: enemy.Position.Extend(hero.Position, APPROACH_DISTANCE)
 		const blink = this.GetBlink(hero)
 		if (blink !== undefined && hero.Distance2D(approach) > BLINK_MIN_DISTANCE) {
 			hero.CastPosition(blink, this.ClampToRange(hero, approach, blink.CastRange))
@@ -155,6 +162,37 @@ export class KickCombo {
 			target = tower
 		}
 		return target
+	}
+
+	private HasCloserUnit(hero: npc_dota_hero_earth_spirit, enemy: Hero): boolean {
+		const distance = hero.Distance2D(enemy)
+		return EntityManager.GetEntitiesByClass(Unit).some(
+			unit => this.IsKickable(unit, hero, enemy) && hero.Distance2D(unit) < distance
+		)
+	}
+
+	private FindCrowder(hero: npc_dota_hero_earth_spirit, enemy: Hero): Nullable<Unit> {
+		let target: Nullable<Unit>
+		let closest = CROWD_RADIUS
+		for (const unit of EntityManager.GetEntitiesByClass(Unit)) {
+			if (!this.IsKickable(unit, hero, enemy)) {
+				continue
+			}
+			const distance = unit.Distance2D(enemy)
+			if (distance >= closest) {
+				continue
+			}
+			closest = distance
+			target = unit
+		}
+		return target
+	}
+
+	private IsKickable(unit: Unit, hero: npc_dota_hero_earth_spirit, enemy: Hero): boolean {
+		if (unit === hero || unit === enemy || unit.IsBuilding) {
+			return false
+		}
+		return unit.IsValid && unit.IsAlive
 	}
 
 	private GetBlink(hero: npc_dota_hero_earth_spirit): Nullable<Item> {

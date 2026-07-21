@@ -111,6 +111,9 @@ export class EarthSpiritCombo {
 			if (!this.menu.BoulderSmash.value) {
 				return true
 			}
+			if (order.OrderType === dotaunitorder_t.DOTA_UNIT_ORDER_CAST_TARGET) {
+				return true
+			}
 			if (this.HasStoneNear(hero.Position, SMASH_RADIUS)) {
 				return true
 			}

@@ -1,7 +1,18 @@
 import { ImageData, Menu } from "github.com/octarine-public/wrapper/index"
 
+const COMBO_ABILITIES = [
+	"earth_spirit_stone_caller",
+	"earth_spirit_geomagnetic_grip",
+	"earth_spirit_rolling_boulder",
+	"earth_spirit_boulder_smash",
+	"earth_spirit_magnetize",
+	"earth_spirit_petrify"
+]
+
 export class EarthSpiritMenu {
 	public readonly State: Menu.Toggle
+	public readonly ComboKey: Menu.KeyBind
+	public readonly ComboAbilities: Menu.ImageSelector
 	public readonly AutoRemnant: Menu.Toggle
 	public readonly BoulderSmash: Menu.Toggle
 	public readonly GeomagneticGrip: Menu.Toggle
@@ -13,6 +24,20 @@ export class EarthSpiritMenu {
 	constructor(parent: Menu.Node) {
 		const tree = parent.AddNode("Earth Spirit", ImageData.GetHeroTexture("npc_dota_hero_earth_spirit", true))
 		this.State = tree.AddToggle("State", true, "Включить комбо Earth Spirit")
+
+		const combo = tree.AddNode("Combo", ImageData.GetSpellTexture("earth_spirit_magnetize"))
+		this.ComboKey = combo.AddKeybind(
+			"Combo Key",
+			"None",
+			"Пока зажата: спамит скиллы по ближайшему\nк курсору врагу по мере отката —\nStone → Grip → Rolling → Smash → Magnetize"
+		)
+		this.ComboAbilities = combo.AddImageSelector(
+			"Способности",
+			COMBO_ABILITIES,
+			new Map(COMBO_ABILITIES.map(name => [name, true])),
+			"Клик по иконке — вкл/выкл скилл в комбо",
+			true
+		)
 
 		const remnant = tree.AddNode("Auto Remnant", ImageData.GetSpellTexture("earth_spirit_stone_caller"))
 		this.AutoRemnant = remnant.AddToggle(

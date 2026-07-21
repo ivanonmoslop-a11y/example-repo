@@ -8,6 +8,7 @@ export class EarthSpiritMenu {
 	public readonly RollingBoulder: Menu.Toggle
 	public readonly ExtendMagnetize: Menu.Toggle
 	public readonly KickToAlly: Menu.KeyBind
+	public readonly KickToTower: Menu.KeyBind
 
 	constructor(parent: Menu.Node) {
 		const tree = parent.AddNode("Earth Spirit", ImageData.GetHeroTexture("npc_dota_hero_earth_spirit", true))
@@ -49,9 +50,14 @@ export class EarthSpiritMenu {
 		)
 
 		this.KickToAlly = tree.AddKeybind(
-			"Kick To Ally",
+			"Пнуть к союзнику",
 			"None",
 			"Пока зажата: пинает ближайшего врага\nв сторону союзника рядом с ним.\nЕсли есть блинк — прыгает на позицию\nза врагом, иначе подходит пешком"
+		)
+		this.KickToTower = tree.AddKeybind(
+			"Пнуть к вышке",
+			"None",
+			"Пока зажата: пинает ближайшего врага\nпод свою ближайшую вышку.\nЕсли есть блинк — прыгает на позицию\nза врагом, иначе подходит пешком"
 		)
 	}
 }

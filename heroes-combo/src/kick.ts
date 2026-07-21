@@ -11,20 +11,22 @@ import {
 	Item,
 	LocalPlayer,
 	npc_dota_hero_earth_spirit,
+	Tower,
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
 import { EarthSpiritMenu } from "./menu"
 
 const ENEMY_SEARCH_RADIUS = 900
-const ALLY_SEARCH_RADIUS = 1200
+const ALLY_SEARCH_RADIUS = 1500
+const TOWER_SEARCH_RADIUS = 1500
 const KICK_RADIUS = 180
 const KICK_OFFSET = 140
 const ANGLE_TOLERANCE = 0.3
 const BLINK_MIN_DISTANCE = 350
 const ORDER_COOLDOWN = 0.1
 
-export class KickToAlly {
+export class KickCombo {
 	private lastOrderTime = 0
 
 	constructor(private readonly menu: EarthSpiritMenu) {
@@ -51,17 +53,21 @@ export class KickToAlly {
 	}
 
 	private PostDataUpdate(): void {
-		if (!this.menu.State.value || !this.menu.KickToAlly.isPressed || !this.InGame) {
+		if (!this.menu.State.value || !this.InGame) {
+			return
+		}
+		const toAlly = this.menu.KickToAlly.isPressed
+		if (!toAlly && !this.menu.KickToTower.isPressed) {
 			return
 		}
 		const hero = this.Hero
 		if (hero === undefined || hero.IsStunned) {
 			return
 		}
-		this.Execute(hero)
+		this.Execute(hero, toAlly)
 	}
 
-	private Execute(hero: npc_dota_hero_earth_spirit): void {
+	private Execute(hero: npc_dota_hero_earth_spirit, toAlly: boolean): void {
 		const smash = hero.GetAbilityByClass(earth_spirit_boulder_smash)
 		if (smash === undefined || smash.Level === 0) {
 			return
@@ -70,11 +76,11 @@ export class KickToAlly {
 		if (enemy === undefined) {
 			return
 		}
-		const ally = this.FindAlly(hero, enemy)
-		if (ally === undefined) {
+		const destination = toAlly ? this.FindAlly(hero, enemy)?.Position : this.FindTower(enemy)?.Position
+		if (destination === undefined) {
 			return
 		}
-		if (this.InPosition(hero, enemy, ally)) {
+		if (this.InPosition(hero, enemy, destination)) {
 			if (smash.CanBeCasted()) {
 				hero.CastTarget(smash, enemy)
 			}
@@ -85,7 +91,7 @@ export class KickToAlly {
 			return
 		}
 		this.lastOrderTime = now
-		const kickPosition = enemy.Position.Extend(ally.Position, -KICK_OFFSET)
+		const kickPosition = enemy.Position.Extend(destination, -KICK_OFFSET)
 		const blink = this.GetBlink(hero)
 		if (blink !== undefined && hero.Distance2D(kickPosition) > BLINK_MIN_DISTANCE) {
 			hero.CastPosition(blink, this.ClampToRange(hero, kickPosition, blink.CastRange))
@@ -135,16 +141,32 @@ export class KickToAlly {
 		return target
 	}
 
-	private InPosition(hero: npc_dota_hero_earth_spirit, enemy: Hero, ally: Hero): boolean {
+	private FindTower(enemy: Hero): Nullable<Tower> {
+		let target: Nullable<Tower>
+		let closest = TOWER_SEARCH_RADIUS
+		for (const tower of EntityManager.GetEntitiesByClass(Tower)) {
+			if (!tower.IsValid || !tower.IsAlive || tower.IsEnemy()) {
+				continue
+			}
+			const distance = tower.Distance2D(enemy)
+			if (distance >= closest) {
+				continue
+			}
+			closest = distance
+			target = tower
+		}
+		return target
+	}
+
+	private InPosition(hero: npc_dota_hero_earth_spirit, enemy: Hero, destination: Vector3): boolean {
 		if (hero.Distance2D(enemy) > KICK_RADIUS) {
 			return false
 		}
 		const heroPosition = hero.Position
 		const enemyPosition = enemy.Position
-		const allyPosition = ally.Position
 		const kickAngle = Math.atan2(enemyPosition.y - heroPosition.y, enemyPosition.x - heroPosition.x)
-		const allyAngle = Math.atan2(allyPosition.y - enemyPosition.y, allyPosition.x - enemyPosition.x)
-		let difference = Math.abs(kickAngle - allyAngle)
+		const destinationAngle = Math.atan2(destination.y - enemyPosition.y, destination.x - enemyPosition.x)
+		let difference = Math.abs(kickAngle - destinationAngle)
 		if (difference > Math.PI) {
 			difference = 2 * Math.PI - difference
 		}
@@ -164,6 +186,7 @@ export class KickToAlly {
 
 	private GameEnded(): void {
 		this.menu.KickToAlly.isPressed = false
+		this.menu.KickToTower.isPressed = false
 		this.lastOrderTime = 0
 	}
 }

@@ -25,7 +25,7 @@ import { EarthSpiritMenu } from "./menu"
 
 const MAGNETIZE_MODIFIER = "modifier_earth_spirit_magnetize"
 const SMASH_RADIUS = 200
-const GRIP_RADIUS = 175
+const GRIP_RADIUS = 300
 const ROLL_RADIUS = 200
 const ROLL_PLACE_DISTANCE = 250
 const ROLL_HIT_RADIUS = 100
@@ -143,7 +143,11 @@ export class EarthSpiritCombo {
 				return true
 			}
 			const target = this.GetOrderPosition(order)
-			if (target === undefined || this.HasStoneNear(target, GRIP_RADIUS)) {
+			if (target === undefined) {
+				return true
+			}
+			const gripRadius = Math.max(ability.GetBaseAOERadiusForLevel(ability.Level), GRIP_RADIUS)
+			if (this.HasStoneNear(target, gripRadius)) {
 				return true
 			}
 			return this.PlaceAndPend(hero, stoneCaller, target, order)

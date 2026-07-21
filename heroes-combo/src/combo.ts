@@ -32,8 +32,8 @@ const GRIP_STONE_BEHIND = 150
 const ROLL_PLACE_DISTANCE = 250
 const ROLL_SPEED_FALLBACK = 1600
 const RANGE_BUFFER = 100
-const TARGET_RING_KEY = "heroes_combo_target"
-const TARGET_RING_COLOR = new Color(80, 220, 120)
+const TARGET_LINE_KEY = "heroes_combo_target_line"
+const TARGET_LINE_COLOR = new Color(255, 40, 40)
 
 export class ComboManager {
 	private readonly particles = new ParticlesSDK()
@@ -70,7 +70,7 @@ export class ComboManager {
 			return
 		}
 		const enemy = this.FindEnemy()
-		this.DrawTarget(enemy)
+		this.DrawTarget(hero, enemy)
 		if (hero.IsStunned || enemy === undefined) {
 			return
 		}
@@ -240,16 +240,16 @@ export class ComboManager {
 		return hero.Position.Extend(position, range)
 	}
 
-	private DrawTarget(enemy: Nullable<Hero>): void {
+	private DrawTarget(hero: npc_dota_hero_earth_spirit, enemy: Nullable<Hero>): void {
 		if (enemy === undefined) {
 			this.ClearTarget()
 			return
 		}
-		this.particles.DrawSelectedRing(TARGET_RING_KEY, enemy, enemy.HullRadius + 40, enemy, TARGET_RING_COLOR)
+		this.particles.DrawLineToTarget(TARGET_LINE_KEY, hero, enemy, TARGET_LINE_COLOR)
 	}
 
 	private ClearTarget(): void {
-		this.particles.DestroyByKey(TARGET_RING_KEY)
+		this.particles.DestroyByKey(TARGET_LINE_KEY)
 	}
 
 	private GameEnded(): void {

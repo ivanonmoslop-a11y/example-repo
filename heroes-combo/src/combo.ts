@@ -45,6 +45,7 @@ const MAGNETIZE_RADIUS = 400
 const MAGNETIZE_SPREAD_RADIUS = 400
 const MAGNETIZE_REFRESH_TIME = 0.8
 const MAGNETIZE_REFRESH_LOCK = 1
+const STONE_PENDING_TIME = 0.5
 const TARGET_LINE_KEY = "heroes_combo_target_line"
 const TARGET_LINE_COLOR = new Color(255, 40, 40)
 
@@ -54,6 +55,8 @@ export class ComboManager {
 	private pendingTime = 0
 	private lastAttackTime = 0
 	private lastRefreshTime = 0
+	private pendingStone: Nullable<Vector3>
+	private pendingStoneTime = 0
 
 	constructor(private readonly menu: EarthSpiritMenu) {
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
@@ -335,7 +338,20 @@ export class ComboManager {
 			return false
 		}
 		hero.CastPosition(stone, position)
+		this.pendingStone = position.Clone()
+		this.pendingStoneTime = GameState.RawGameTime
 		this.LockCast(stone)
+		return true
+	}
+
+	private HasPendingStone(): boolean {
+		if (this.pendingStone === undefined) {
+			return false
+		}
+		if (GameState.RawGameTime - this.pendingStoneTime > STONE_PENDING_TIME) {
+			this.pendingStone = undefined
+			return false
+		}
 		return true
 	}
 
@@ -357,6 +373,12 @@ export class ComboManager {
 		const finish = origin.Extend(aim, ROLL_REACH)
 		const start = new Vector2(origin.x, origin.y)
 		const end = new Vector2(finish.x, finish.y)
+		if (this.HasPendingStone()) {
+			const pending = new Vector2(this.pendingStone!.x, this.pendingStone!.y)
+			if (pending.DistanceSegment(start, end, true) <= ROLL_HIT_RADIUS) {
+				return true
+			}
+		}
 		return EntityManager.GetEntitiesByClass(EarthSpiritStone).some(stone => {
 			if (!stone.IsValid || !stone.IsAlive || stone.IsEnemy()) {
 				return false
@@ -367,6 +389,9 @@ export class ComboManager {
 	}
 
 	private HasStoneNear(position: Vector3, radius: number): boolean {
+		if (this.HasPendingStone() && this.pendingStone!.Distance2D(position) <= radius) {
+			return true
+		}
 		return EntityManager.GetEntitiesByClass(EarthSpiritStone).some(
 			stone => stone.IsValid && stone.IsAlive && !stone.IsEnemy() && stone.Distance2D(position) <= radius
 		)
@@ -433,6 +458,7 @@ export class ComboManager {
 		this.pendingTime = 0
 		this.lastAttackTime = 0
 		this.lastRefreshTime = 0
+		this.pendingStone = undefined
 		this.ClearTarget()
 	}
 

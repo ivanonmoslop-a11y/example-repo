@@ -15,6 +15,7 @@ import {
 	GameState,
 	Hero,
 	InputManager,
+	LifeState,
 	LocalPlayer,
 	npc_dota_hero_earth_spirit,
 	ParticlesSDK,
@@ -196,10 +197,7 @@ export class ComboManager {
 		let target: Nullable<Hero>
 		let closest = Number.MAX_VALUE
 		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
-			if (!enemy.IsValid || !enemy.IsAlive || !enemy.IsVisible || !enemy.IsEnemy()) {
-				continue
-			}
-			if (enemy.IsIllusion) {
+			if (!this.IsValidTarget(enemy)) {
 				continue
 			}
 			const distance = enemy.Distance2D(cursor)
@@ -210,6 +208,17 @@ export class ComboManager {
 			target = enemy
 		}
 		return target
+	}
+
+	private IsValidTarget(enemy: Hero): boolean {
+		return (
+			enemy.IsValid &&
+			enemy.IsSpawned &&
+			enemy.LifeState === LifeState.LIFE_ALIVE &&
+			enemy.IsVisible &&
+			enemy.IsEnemy() &&
+			!enemy.IsIllusion
+		)
 	}
 
 	private Enabled(name: string): boolean {

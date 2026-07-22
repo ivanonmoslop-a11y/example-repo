@@ -9,6 +9,7 @@ import {
 	Hero,
 	InputManager,
 	Item,
+	LifeState,
 	LocalPlayer,
 	npc_dota_hero_earth_spirit,
 	Tower,
@@ -111,7 +112,7 @@ export class KickCombo {
 		let target: Nullable<Hero>
 		let closest = Number.MAX_VALUE
 		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
-			if (!enemy.IsValid || !enemy.IsAlive || !enemy.IsVisible || !enemy.IsEnemy()) {
+			if (!this.IsSpawnedHero(enemy) || !enemy.IsVisible || !enemy.IsEnemy()) {
 				continue
 			}
 			if (enemy.IsIllusion || hero.Distance2D(enemy) > ENEMY_SEARCH_RADIUS) {
@@ -131,7 +132,7 @@ export class KickCombo {
 		let target: Nullable<Hero>
 		let closest = ALLY_SEARCH_RADIUS
 		for (const ally of EntityManager.GetEntitiesByClass(Hero)) {
-			if (ally === hero || !ally.IsValid || !ally.IsAlive || ally.IsEnemy()) {
+			if (ally === hero || !this.IsSpawnedHero(ally) || ally.IsEnemy()) {
 				continue
 			}
 			if (ally.IsIllusion) {
@@ -193,6 +194,10 @@ export class KickCombo {
 			return false
 		}
 		return unit.IsValid && unit.IsAlive
+	}
+
+	private IsSpawnedHero(hero: Hero): boolean {
+		return hero.IsValid && hero.IsSpawned && hero.LifeState === LifeState.LIFE_ALIVE
 	}
 
 	private GetBlink(hero: npc_dota_hero_earth_spirit): Nullable<Item> {

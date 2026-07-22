@@ -12,17 +12,19 @@ import {
 	GameState,
 	Hero,
 	InputManager,
+	Item,
 	LifeState,
 	LocalPlayer,
 	Modifier,
 	ParticlesSDK,
 	pudge_meat_hook,
 	pudge_rot,
+	UnitPortalData,
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
-import { HookPredictor } from "./hook-predict"
-import { PudgeMenu } from "./pudge-menu"
+import { HookPredictor, IHookPredictOptions, IHookSolution } from "./hook-predict"
+import { PUDGE_ITEMS, PudgeMenu } from "./pudge-menu"
 
 const PUDGE_NAME = "npc_dota_hero_pudge"
 const HOOK = "pudge_meat_hook"
@@ -35,30 +37,116 @@ const ROT_MODIFIER = "modifier_pudge_rot"
 const DISMEMBER_MODIFIER = "modifier_pudge_dismember"
 const LINKEN_MODIFIER = "modifier_item_sphere_target"
 
-const HOOK_SPEED_FALLBACK = 1600
 const HOOK_RANGE_FALLBACK = 1000
 const ROT_RADIUS_FALLBACK = 250
 const DISMEMBER_RANGE_FALLBACK = 175
 const HEAP_RANGE = 500
 
-const AUTO_HOOK_CHANCE = 0.8
+const AUTO_HOOK_CHANCE = 0.5
 const COMBO_HOOK_CHANCE = 0.3
-const CANCEL_CHANCE = 0.45
-const CANCEL_DEVIATION = 1.5
 const HOOK_WATCH_GRACE = 0.5
 
 const COMBO_HOLD_TIME = 3
 const HOOK_DRAG_MAX = 2
+const FAKE_HOOK_TIMEOUT = 0.5
+const FAKE_HOOK_CANCEL_SAFETY = 0.005
 const ROT_ORDER_GUARD = 0.3
-const ORDER_GUARD = 0.03
+const ORDER_GUARD = 0
 const ATTACK_GAP = 0.1
+const TELEPORT_ARRIVAL_HIT_DELAY = 0.03
+
+const TIMED_EXIT_MODIFIERS = [
+	"modifier_puck_phase_shift",
+	"modifier_obsidian_destroyer_astral_imprisonment_prison",
+	"modifier_shadow_demon_disruption",
+	"modifier_eul_cyclone",
+	"modifier_wind_waker",
+	"modifier_cyclone",
+	"modifier_brewmaster_storm_cyclone",
+	"modifier_invoker_tornado",
+	"modifier_disruptor_glimpse",
+	"modifier_monkey_king_bounce_leap",
+	"modifier_void_spirit_dissimilate_phase",
+	"modifier_ember_spirit_sleight_of_fist_caster_invulnerability"
+]
+
+const ITEM_SELF_RANGE = 700
+const ITEM_ENGAGE_RANGE = 650
+const ITEM_CHASE_RANGE = 425
+const BLINK_MIN_RANGE = 200
+const BLINK_MAX_RANGE = 1200
+const SOUL_RING_MAX_MANA = 45
+const SOUL_RING_MIN_HP = 35
+const BLOODSTONE_MAX_HP = 65
+const SATANIC_MAX_HP = 35
+const SHIVA_RADIUS_FALLBACK = 900
+const ETHEREAL_MODIFIER = "modifier_item_ethereal_blade_slow"
+const URN_MODIFIER = "modifier_item_urn_damage"
+const VESSEL_MODIFIER = "modifier_item_spirit_vessel_damage"
+
+const ITEM_PRIORITY = [
+	"item_sheepstick",
+	"item_black_king_bar",
+	"item_ethereal_blade",
+	"item_bloodthorn",
+	"item_orchid",
+	"item_nullifier",
+	"item_veil_of_discord",
+	"item_heavens_halberd",
+	"item_spirit_vessel",
+	"item_urn_of_shadows",
+	"item_shivas_guard",
+	"item_dagon_5",
+	"item_rod_of_atos",
+	"item_gungir",
+	"item_abyssal_blade",
+	"item_diffusal_blade",
+	"item_disperser",
+	"item_blood_grenade",
+	"item_soul_ring",
+	"item_satanic",
+	"item_bloodstone",
+	"item_blade_mail",
+	"item_pipe",
+	"item_lotus_orb",
+	"item_armlet",
+	"item_boots_of_bearing",
+	"item_ancient_janggo",
+	"item_mjollnir",
+	"item_manta",
+	"item_invis_sword",
+	"item_silver_edge",
+	"item_mask_of_madness",
+	"item_refresher",
+	"item_vanguard"
+]
+
+const LINKEN_BREAKERS = [
+	"item_urn_of_shadows",
+	"item_spirit_vessel",
+	"item_diffusal_blade",
+	"item_rod_of_atos",
+	"item_harpoon",
+	"item_orchid",
+	"item_nullifier",
+	"item_bloodthorn",
+	"item_sheepstick"
+]
 
 const TARGET_LINE_KEY = "heroes_combo_pudge_target"
 const TARGET_LINE_COLOR = new Color(255, 40, 40)
 
+interface IPortalTrack {
+	model: UnitPortalData
+	startTime: number
+	finishTime: number
+}
+
 export class PudgeCombo {
 	private readonly particles = new ParticlesSDK()
 	private readonly predictor = new HookPredictor()
+	private readonly portals = new Map<UnitPortalData, IPortalTrack>()
+	private readonly relocatePortals = new Map<Modifier, UnitPortalData>()
 	private pendingAbility: Nullable<Ability>
 	private pendingTime = 0
 	private lastAttackTime = 0
@@ -70,11 +158,19 @@ export class PudgeCombo {
 	private hookOrderPoint: Nullable<Vector3>
 	private hookOrderTarget: Nullable<Hero>
 	private hookOrderTime = 0
+	private hookTeleportTimed = false
+	private hookPortal: Nullable<IPortalTrack>
+	private hookExitModifier: Nullable<Modifier>
+	private fakeHookPending = false
+	private fakeHookTime = 0
 
 	constructor(private readonly menu: PudgeMenu) {
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
 		EventsSDK.on("ModifierCreated", this.ModifierCreated.bind(this))
+		EventsSDK.on("ModifierRemoved", this.ModifierRemoved.bind(this))
 		EventsSDK.on("PrepareUnitOrders", this.PrepareUnitOrders.bind(this))
+		EventsSDK.on("UnitPortalChanged", this.UnitPortalChanged.bind(this))
+		EventsSDK.on("UnitPortalDestroyed", this.UnitPortalDestroyed.bind(this))
 		EventsSDK.on("GameEnded", this.GameEnded.bind(this))
 	}
 
@@ -93,33 +189,96 @@ export class PudgeCombo {
 		return GameRules?.GameState === DOTAGameState.DOTA_GAMERULES_STATE_GAME_IN_PROGRESS
 	}
 
+	private UnitPortalChanged(model: UnitPortalData): void {
+		const caster = model.Caster
+		if (caster !== undefined && !caster.IsEnemy()) {
+			return
+		}
+		const current = this.portals.get(model)
+		const startTime = current?.startTime ?? GameState.RawGameTime
+		this.portals.set(model, {
+			finishTime: startTime + model.MaxDuration,
+			model,
+			startTime
+		})
+	}
+
+	private UnitPortalDestroyed(model: UnitPortalData): void {
+		this.portals.delete(model)
+	}
+
 	private ModifierCreated(modifier: Modifier): void {
+		this.TrackRelocate(modifier)
 		if (modifier.Name !== HOOK_MODIFIER || !this.menu.State.value) {
 			return
 		}
 		const hero = this.Hero
 		const victim = modifier.Parent
-		if (hero === undefined || !(victim instanceof Hero) || !victim.IsEnemy()) {
+		if (hero === undefined || !(victim instanceof Hero)) {
 			return
 		}
 		if (modifier.Caster !== undefined && modifier.Caster !== hero) {
 			return
 		}
+		if (!victim.IsEnemy()) {
+			return
+		}
+		const now = GameState.RawGameTime
 		this.hookVictim = victim
-		this.hookVictimUntil = GameState.RawGameTime + HOOK_DRAG_MAX
+		this.hookVictimUntil = now + HOOK_DRAG_MAX
 		this.hookOrderPoint = undefined
+		this.hookTeleportTimed = false
+		this.hookPortal = undefined
+		this.hookExitModifier = undefined
 		if (this.menu.ComboAfterHook.value) {
-			this.comboUntil = GameState.RawGameTime + COMBO_HOLD_TIME
+			this.comboUntil = now + COMBO_HOLD_TIME
+			this.hookVictimUntil = this.comboUntil
 		}
 	}
 
+	private TrackRelocate(modifier: Modifier): void {
+		if (modifier.Name !== "modifier_wisp_relocate_thinker") {
+			return
+		}
+		const caster = modifier.Caster
+		const thinker = modifier.Parent
+		if (caster === undefined || thinker === undefined || !thinker.Position.IsValid || !caster.IsEnemy()) {
+			return
+		}
+		const abilityDelay =
+			modifier.Ability?.GetSpecialValue("cast_delay") || modifier.Ability?.GetSpecialValue("delay") || 0
+		const duration = abilityDelay || modifier.RemainingTime || modifier.Duration || 3
+		const model = new UnitPortalData(caster.Index)
+		model.AbilityName = "wisp_relocate"
+		model.MaxDuration = duration
+		model.UpdateData(undefined, caster.Position, thinker.Position)
+		this.relocatePortals.set(modifier, model)
+		this.UnitPortalChanged(model)
+	}
+
+	private ModifierRemoved(modifier: Modifier): void {
+		const model = this.relocatePortals.get(modifier)
+		if (model === undefined) {
+			return
+		}
+		model.IsValid = false
+		model.IsCanceled = modifier.RemainingTime > GameState.TickInterval
+		this.relocatePortals.delete(modifier)
+		this.UnitPortalDestroyed(model)
+	}
+
 	private PrepareUnitOrders(order: ExecuteOrder): boolean {
-		if (!order.IsPlayerInput || this.comboUntil === 0) {
+		const hero = this.Hero
+		if (!order.IsPlayerInput) {
 			return true
 		}
-		const hero = this.Hero
 		if (hero !== undefined && order.Issuers.includes(hero)) {
 			this.comboUntil = 0
+			this.hookOrderPoint = undefined
+			this.hookOrderTarget = undefined
+			this.hookTeleportTimed = false
+			this.hookPortal = undefined
+			this.hookExitModifier = undefined
 		}
 		return true
 	}
@@ -132,6 +291,10 @@ export class PudgeCombo {
 		}
 		this.predictor.Update(hero)
 		this.UpdateHookVictim()
+		if (this.FakeHook(hero)) {
+			this.ClearTarget()
+			return
+		}
 		if (this.menu.AutoRot.value) {
 			this.AutoRot(hero)
 		}
@@ -140,6 +303,14 @@ export class PudgeCombo {
 		const aiming = this.menu.AutoHookKey.isPressed
 		if (!combo && !aiming) {
 			this.ClearTarget()
+			return
+		}
+		const portal = aiming ? this.FindTeleportPortal(hero) : undefined
+		if (portal !== undefined) {
+			this.ClearTarget()
+			if (!hero.IsChanneling && !hero.IsStunned && this.CanAct()) {
+				this.AutoHookPortal(hero, portal)
+			}
 			return
 		}
 		const enemy = aiming ? this.AimTarget(hero) : this.hookVictim ?? this.FindEnemy()
@@ -153,6 +324,47 @@ export class PudgeCombo {
 		if (combo) {
 			this.Execute(hero, aiming ? this.hookVictim ?? this.FindEnemy() ?? enemy : enemy)
 		}
+	}
+
+	private FakeHook(hero: Hero): boolean {
+		const pressed = this.menu.FakeHookKey.isPressed
+
+		if (this.fakeHookPending) {
+			const pendingHook = hero.GetAbilityByClass(pudge_meat_hook)
+			if (pendingHook !== undefined && pendingHook.IsInAbilityPhase) {
+				const elapsed = Math.max(GameState.RawGameTime - pendingHook.CastStartTime, 0)
+				const cancelAt = Math.max(pendingHook.CastPoint - GameState.TickInterval - FAKE_HOOK_CANCEL_SAFETY, 0)
+				if (elapsed >= cancelAt) {
+					hero.OrderStop()
+					this.fakeHookPending = false
+					this.fakeHookTime = 0
+				}
+				return true
+			}
+			if (GameState.RawGameTime - this.fakeHookTime > FAKE_HOOK_TIMEOUT) {
+				this.fakeHookPending = false
+				this.fakeHookTime = 0
+			}
+			return true
+		}
+
+		if (!pressed || hero.IsChanneling || hero.IsStunned || !this.CanAct()) {
+			return false
+		}
+		const hook = hero.GetAbilityByClass(pudge_meat_hook)
+		if (!this.Ready(hook)) {
+			return false
+		}
+		const target = this.AimTarget(hero)
+		const point =
+			target === undefined
+				? InputManager.CursorOnWorld
+				: this.predictor.Solve(hero, hook!, target, this.HookOptions()).point
+		this.CastHookOrder(hero, hook!, point)
+		this.LockCast(hook!)
+		this.fakeHookPending = true
+		this.fakeHookTime = GameState.RawGameTime
+		return true
 	}
 
 	private ComboActive(): boolean {
@@ -173,7 +385,7 @@ export class PudgeCombo {
 			this.hookVictim = undefined
 			return
 		}
-		if (!this.IsValidTarget(victim) || !victim.HasBuffByName(HOOK_MODIFIER)) {
+		if (!this.IsValidTarget(victim)) {
 			this.hookVictim = undefined
 		}
 	}
@@ -186,25 +398,147 @@ export class PudgeCombo {
 		return this.FindEnemy(hero, range) ?? this.FindEnemy()
 	}
 
+	private FindTeleportPortal(hero: Hero): IPortalTrack | undefined {
+		const hook = hero.GetAbilityByClass(pudge_meat_hook)
+		if (!this.Enabled(HOOK) || !this.Ready(hook)) {
+			return undefined
+		}
+		const range = this.HookRange(hook!)
+		const cursor = InputManager.CursorOnWorld
+		let selected: IPortalTrack | undefined
+		let closest = Number.MAX_VALUE
+		for (const portal of this.portals.values()) {
+			if (!this.ValidPortal(portal)) {
+				continue
+			}
+			const destination = this.PortalDestination(portal)
+			const hullRadius = portal.model.Caster?.HullRadius ?? 24
+			if (hero.Position.Distance2D(destination) > range + hullRadius) {
+				continue
+			}
+			const cursorDistance = destination.Distance2D(cursor)
+			if (cursorDistance >= closest) {
+				continue
+			}
+			closest = cursorDistance
+			selected = portal
+		}
+		return selected
+	}
+
+	private ValidPortal(portal: IPortalTrack): boolean {
+		const caster = portal.model.Caster
+		if (caster !== undefined && (!caster.IsValid || !caster.IsAlive || !caster.IsEnemy())) {
+			return false
+		}
+		return !portal.model.IsCanceled && portal.model.EndPosition.IsValid && this.PortalRemaining(portal) > 0
+	}
+
+	private PortalRemaining(portal: IPortalTrack): number {
+		return portal.finishTime - GameState.RawGameTime
+	}
+
+	private PortalDestination(portal: IPortalTrack): Vector3 {
+		const target = portal.model.Target
+		if (target !== undefined && target.IsValid && target.IsAlive && target.IsMoving) {
+			return target.GetPredictionPosition(Math.max(this.PortalRemaining(portal), 0))
+		}
+		return portal.model.EndPosition
+	}
+
 	private HookRange(hook: pudge_meat_hook): number {
-		return hook.CastRange > 0 ? hook.CastRange : HOOK_RANGE_FALLBACK
+		return hook.GetSpecialValue("hook_distance", hook.Level) || hook.CastRange || HOOK_RANGE_FALLBACK
 	}
 
 	// Zero delay: the first tick a solution clears the bar, the hook goes out.
 	private AutoHook(hero: Hero, target: Hero): boolean {
-		if (!this.Enabled(HOOK) || target.IsInvulnerable || target.IsUntargetable) {
+		if (!this.Enabled(HOOK)) {
 			return false
 		}
 		const hook = hero.GetAbilityByClass(pudge_meat_hook)
 		if (!this.Ready(hook)) {
 			return false
 		}
-		const solution = this.predictor.Solve(hero, hook!, target)
-		if (solution.blocked || solution.outOfRange || solution.chance < AUTO_HOOK_CHANCE) {
+		const exitModifier = this.TimedExitModifier(target)
+		if (exitModifier !== undefined) {
+			return this.AutoHookExit(hero, hook!, target, exitModifier)
+		}
+		if (target.IsInvulnerable || target.IsUntargetable) {
 			return false
 		}
-		this.CastHook(hero, hook!, target, solution.point)
+		const solution = this.predictor.Solve(hero, hook!, target, this.HookOptions())
+		if (solution.reason !== "ok" || solution.blocked || solution.outOfRange || solution.chance < AUTO_HOOK_CHANCE) {
+			return false
+		}
+		this.CastHook(hero, hook!, target, solution)
 		return true
+	}
+
+	private TimedExitModifier(target: Hero): Modifier | undefined {
+		for (const name of TIMED_EXIT_MODIFIERS) {
+			const modifier = target.GetBuffByName(name)
+			if (modifier !== undefined && modifier.RemainingTime > 0) {
+				return modifier
+			}
+		}
+		return undefined
+	}
+
+	private AutoHookExit(hero: Hero, hook: pudge_meat_hook, target: Hero, modifier: Modifier): boolean {
+		const solution = this.ExitSolution(hero, hook, target, modifier)
+		if (solution.reason !== "ok" || solution.blocked || solution.outOfRange) {
+			return false
+		}
+		if (!this.TeleportHookWindow(solution, modifier.RemainingTime)) {
+			return false
+		}
+		this.CastHook(hero, hook, target, solution, undefined, modifier)
+		return true
+	}
+
+	private ExitSolution(
+		hero: Hero,
+		hook: pudge_meat_hook,
+		target: Hero,
+		modifier: Modifier,
+		castDelay?: number
+	): IHookSolution {
+		const options = this.HookOptions(castDelay)
+		if (modifier.Name === "modifier_disruptor_glimpse") {
+			const backtrack = modifier.Ability?.GetSpecialValue("backtrack_time") || 4
+			const destination = this.predictor.HistoricalPosition(target, backtrack)
+			if (destination !== undefined) {
+				return this.predictor.SolvePoint(hero, hook, target, destination, options)
+			}
+		}
+		return this.predictor.SolveExit(hero, hook, target, modifier.RemainingTime, options)
+	}
+
+	private AutoHookPortal(hero: Hero, portal: IPortalTrack): boolean {
+		const hook = hero.GetAbilityByClass(pudge_meat_hook)
+		if (!this.Enabled(HOOK) || !this.Ready(hook) || !this.ValidPortal(portal)) {
+			return false
+		}
+		const caster = portal.model.Caster
+		const target = caster instanceof Hero ? caster : undefined
+		const destination = this.PortalDestination(portal)
+		const solution = this.predictor.SolvePoint(hero, hook!, caster, destination, this.HookOptions())
+		if (solution.reason !== "ok" || solution.blocked || solution.outOfRange) {
+			return false
+		}
+		if (!this.TeleportHookWindow(solution, this.PortalRemaining(portal))) {
+			return false
+		}
+		this.CastHook(hero, hook!, target, solution, portal)
+		return true
+	}
+
+	private TeleportHookWindow(solution: IHookSolution, remaining: number): boolean {
+		const impactDelay = solution.totalTime
+		const impactAfterArrival = impactDelay - remaining
+		const earliest = Math.max(TELEPORT_ARRIVAL_HIT_DELAY - GameState.TickInterval * 0.25, 0.015)
+		const latest = TELEPORT_ARRIVAL_HIT_DELAY + GameState.TickInterval * 1.5
+		return impactAfterArrival >= earliest && impactAfterArrival <= latest
 	}
 
 	private Execute(hero: Hero, enemy: Hero): void {
@@ -214,11 +548,15 @@ export class PudgeCombo {
 		const dismember = hero.GetAbilityByName(DISMEMBER)
 		const distance = hero.Distance2D(enemy)
 		const dragged = enemy === this.hookVictim
+		const dismemberInRange =
+			this.Enabled(DISMEMBER) && this.Ready(dismember) && this.InCastRange(hero, dismember!, enemy)
+		const dismemberReady = dismemberInRange && this.Castable(dismember, enemy)
 
-		if (dragged && this.InstantDismember(hero, dismember, enemy)) {
+		if (!dragged && this.InitiateWithItem(hero, dismember, enemy, distance)) {
 			return
 		}
-		if (!dragged && this.Enabled(HOOK) && this.Ready(hook) && this.ComboHook(hero, hook!, enemy)) {
+		const spellsSpent = !this.Ready(hook) && !this.Ready(dismember)
+		if (this.UseItems(hero, enemy, distance, dismemberReady, spellsSpent, this.Ready(hook))) {
 			return
 		}
 		if (this.Enabled(ROT) && rot !== undefined && this.RotInRadius(rot, distance) && this.EnableRot(hero, rot)) {
@@ -227,7 +565,7 @@ export class PudgeCombo {
 		if (this.Enabled(FLESH_HEAP) && this.CastHeap(hero, heap, distance)) {
 			return
 		}
-		if (this.Enabled(DISMEMBER) && this.Castable(dismember, enemy) && this.InCastRange(hero, dismember!, enemy)) {
+		if (dismemberReady) {
 			hero.CastTarget(dismember!, enemy)
 			this.LockCast(dismember!)
 			return
@@ -235,77 +573,373 @@ export class PudgeCombo {
 		if (dragged) {
 			return
 		}
+		if (!dismemberInRange && this.Enabled(HOOK) && this.Ready(hook) && this.ComboHook(hero, hook!, enemy)) {
+			return
+		}
 		this.Attack(hero, enemy)
+	}
+
+	private InitiateWithItem(hero: Hero, dismember: Nullable<Ability>, enemy: Hero, distance: number): boolean {
+		if (dismember !== undefined && this.InCastRange(hero, dismember, enemy)) {
+			return false
+		}
+
+		const blink = this.FindItem(hero, "item_blink")
+		if (
+			this.ItemEnabled("item_blink") &&
+			blink !== undefined &&
+			blink.CanBeCasted() &&
+			distance > BLINK_MIN_RANGE &&
+			this.ItemInRange(hero, blink, "item_blink", enemy, distance)
+		) {
+			this.CastItem(hero, blink, "item_blink", enemy)
+			return true
+		}
+
+		const harpoon = this.FindItem(hero, "item_harpoon")
+		if (
+			this.ItemEnabled("item_harpoon") &&
+			harpoon !== undefined &&
+			harpoon.CanBeCasted() &&
+			!enemy.IsMagicImmune &&
+			!enemy.IsInvulnerable &&
+			!enemy.IsUntargetable &&
+			this.ItemInRange(hero, harpoon, "item_harpoon", enemy, distance)
+		) {
+			this.CastItem(hero, harpoon, "item_harpoon", enemy)
+			return true
+		}
+		return false
+	}
+
+	private UseItems(
+		hero: Hero,
+		enemy: Hero,
+		distance: number,
+		dismemberReady: boolean,
+		spellsSpent: boolean,
+		hookReady: boolean
+	): boolean {
+		if (enemy.HasBuffByName(LINKEN_MODIFIER)) {
+			for (const name of LINKEN_BREAKERS) {
+				if (this.TryItem(hero, enemy, name, distance, dismemberReady, spellsSpent, hookReady)) {
+					return true
+				}
+			}
+			return false
+		}
+		for (const name of ITEM_PRIORITY) {
+			if (this.TryItem(hero, enemy, name, distance, dismemberReady, spellsSpent, hookReady)) {
+				return true
+			}
+		}
+		return false
+	}
+
+	private TryItem(
+		hero: Hero,
+		enemy: Hero,
+		name: string,
+		distance: number,
+		dismemberReady: boolean,
+		spellsSpent: boolean,
+		hookReady: boolean
+	): boolean {
+		if (!this.ItemEnabled(name)) {
+			return false
+		}
+		const item = this.FindItem(hero, name)
+		if (item === undefined || !item.CanBeCasted()) {
+			return false
+		}
+		if (!this.ItemInRange(hero, item, name, enemy, distance)) {
+			return false
+		}
+		if (!this.ItemAllowed(name, item, hero, enemy, distance, dismemberReady, spellsSpent, hookReady)) {
+			return false
+		}
+		this.CastItem(hero, item, name, enemy)
+		return true
+	}
+
+	private ItemAllowed(
+		name: string,
+		item: Item,
+		hero: Hero,
+		enemy: Hero,
+		distance: number,
+		dismemberReady: boolean,
+		spellsSpent: boolean,
+		hookReady: boolean
+	): boolean {
+		if (this.TargetsEnemies(item) && (enemy.IsMagicImmune || enemy.IsInvulnerable || enemy.IsUntargetable)) {
+			return false
+		}
+		switch (name) {
+			case "item_soul_ring":
+				return hero.ManaPercent <= SOUL_RING_MAX_MANA && hero.HPPercent > SOUL_RING_MIN_HP
+			case "item_black_king_bar":
+				return !hero.IsMagicImmune && distance <= ITEM_ENGAGE_RANGE && (dismemberReady || hero.HPPercent <= 70)
+			case "item_sheepstick":
+				return !enemy.IsHexed && !enemy.IsStunned
+			case "item_abyssal_blade":
+				return !enemy.IsStunned
+			case "item_bloodthorn":
+			case "item_orchid":
+				return !enemy.IsSilenced
+			case "item_nullifier":
+				return (
+					enemy.HasBuffByName(LINKEN_MODIFIER) ||
+					enemy.Buffs.some(modifier => !modifier.IsDebuff() && modifier.IsDispellable)
+				)
+			case "item_rod_of_atos":
+			case "item_gungir":
+				return !enemy.IsRooted && !enemy.IsStunned
+			case "item_shivas_guard":
+				return distance <= (item.GetSpecialValue("blast_radius") || SHIVA_RADIUS_FALLBACK)
+			case "item_bloodstone":
+				return hero.HPPercent <= BLOODSTONE_MAX_HP && distance <= ITEM_ENGAGE_RANGE
+			case "item_blade_mail":
+				return hero.HPPercent <= 70 && distance <= ITEM_ENGAGE_RANGE
+			case "item_pipe":
+				return hero.HPPercent <= 75 && distance <= ITEM_ENGAGE_RANGE
+			case "item_lotus_orb":
+				return (
+					distance <= ITEM_ENGAGE_RANGE &&
+					(dismemberReady || hero.Buffs.some(modifier => modifier.IsDebuff() && modifier.IsDispellable))
+				)
+			case "item_heavens_halberd":
+				return !enemy.IsDisarmed
+			case "item_ethereal_blade":
+				return !enemy.HasBuffByName(ETHEREAL_MODIFIER)
+			case "item_dagon_5":
+				return !this.EtherealPending(hero, enemy)
+			case "item_spirit_vessel":
+				return !enemy.HasBuffByName(VESSEL_MODIFIER)
+			case "item_urn_of_shadows":
+				return !enemy.HasBuffByName(URN_MODIFIER) && !enemy.HasBuffByName(VESSEL_MODIFIER)
+			case "item_blink":
+				return !hookReady && distance > BLINK_MIN_RANGE
+			case "item_harpoon":
+				return enemy.HasBuffByName(LINKEN_MODIFIER) || (!hookReady && distance > hero.GetAttackRange(enemy))
+			case "item_armlet":
+				return !item.IsToggled && distance <= ITEM_ENGAGE_RANGE
+			case "item_ancient_janggo":
+			case "item_boots_of_bearing":
+				return distance > ITEM_CHASE_RANGE
+			case "item_manta":
+				return hero.IsSilenced || hero.IsRooted
+			case "item_invis_sword":
+			case "item_silver_edge":
+				return !hookReady && distance > ITEM_CHASE_RANGE
+			case "item_satanic":
+				return hero.HPPercent <= SATANIC_MAX_HP && hero.IsInRange(enemy, hero.GetAttackRange(enemy))
+			case "item_mask_of_madness":
+				return spellsSpent && hero.IsInRange(enemy, hero.GetAttackRange(enemy))
+			case "item_refresher":
+				return spellsSpent
+			case "item_vanguard":
+				return false
+			default:
+				return true
+		}
+	}
+
+	private ItemEnabled(name: string): boolean {
+		return PUDGE_ITEMS.includes(name) && this.menu.Items.IsEnabled(name)
+	}
+
+	private FindItem(hero: Hero, name: string): Nullable<Item> {
+		return hero.Items.find(item => {
+			if (item.Name === name) {
+				return true
+			}
+			if (name === "item_blink") {
+				return item.Name.endsWith("blink")
+			}
+			if (name === "item_dagon_5") {
+				return item.Name.startsWith("item_dagon")
+			}
+			return false
+		})
+	}
+
+	private ItemInRange(hero: Hero, item: Item, name: string, enemy: Hero, distance: number): boolean {
+		if (name === "item_blink") {
+			return distance <= BLINK_MAX_RANGE + ITEM_ENGAGE_RANGE
+		}
+		if (
+			!item.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_UNIT_TARGET) &&
+			!item.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_POINT)
+		) {
+			return true
+		}
+		if (item.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_UNIT_TARGET) && !this.TargetsEnemies(item)) {
+			return true
+		}
+		const range = item.CastRange > 0 ? item.CastRange : ITEM_SELF_RANGE
+		return hero.IsInRange(enemy, range)
+	}
+
+	private CastItem(hero: Hero, item: Item, name: string, enemy: Hero): void {
+		if (name === "item_blink") {
+			const distance = hero.Distance2D(enemy)
+			const range = Math.min(item.CastRange || BLINK_MAX_RANGE, BLINK_MAX_RANGE)
+			const travel = Math.min(Math.max(distance - DISMEMBER_RANGE_FALLBACK, 0), range)
+			hero.CastPosition(item, hero.Position.Extend(enemy.Position, travel))
+		} else if (item.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_UNIT_TARGET)) {
+			hero.CastTarget(item, this.TargetsEnemies(item) ? enemy : hero)
+		} else if (item.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_POINT)) {
+			const range = item.CastRange > 0 ? item.CastRange : ITEM_SELF_RANGE
+			const point = hero.Distance2D(enemy) <= range ? enemy.Position : hero.Position.Extend(enemy.Position, range)
+			hero.CastPosition(item, point)
+		} else if (item.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_TOGGLE)) {
+			hero.CastToggle(item)
+		} else {
+			hero.CastNoTarget(item)
+		}
+		this.LockCast(item)
+	}
+
+	private TargetsEnemies(item: Item): boolean {
+		return item.TargetTeamMask.hasMask(DOTA_UNIT_TARGET_TEAM.DOTA_UNIT_TARGET_TEAM_ENEMY)
+	}
+
+	private EtherealPending(hero: Hero, enemy: Hero): boolean {
+		if (enemy.HasBuffByName(ETHEREAL_MODIFIER)) {
+			return false
+		}
+		const ethereal = this.FindItem(hero, "item_ethereal_blade")
+		return ethereal !== undefined && this.ItemEnabled("item_ethereal_blade") && ethereal.CanBeCasted()
 	}
 
 	private ComboHook(hero: Hero, hook: pudge_meat_hook, enemy: Hero): boolean {
 		if (enemy.IsInvulnerable || enemy.IsUntargetable) {
 			return false
 		}
-		const solution = this.predictor.Solve(hero, hook, enemy)
-		if (solution.blocked || solution.outOfRange || solution.chance < COMBO_HOOK_CHANCE) {
+		const solution = this.predictor.Solve(hero, hook, enemy, this.HookOptions())
+		if (
+			solution.reason !== "ok" ||
+			solution.blocked ||
+			solution.outOfRange ||
+			solution.chance < COMBO_HOOK_CHANCE
+		) {
 			return false
 		}
-		this.CastHook(hero, hook, enemy, solution.point)
+		this.CastHook(hero, hook, enemy, solution)
 		return true
 	}
 
-	private CastHook(hero: Hero, hook: pudge_meat_hook, target: Hero, point: Vector3): void {
-		hero.CastPosition(hook, point)
+	private CastHook(
+		hero: Hero,
+		hook: pudge_meat_hook,
+		target: Nullable<Hero>,
+		solution: IHookSolution,
+		portal?: IPortalTrack,
+		exitModifier?: Modifier
+	): void {
+		this.CastHookOrder(hero, hook, solution.point)
 		this.LockCast(hook)
-		this.hookOrderPoint = point
+		this.hookOrderPoint = solution.point
 		this.hookOrderTarget = target
 		this.hookOrderTime = GameState.RawGameTime
+		this.hookTeleportTimed = portal !== undefined
+		this.hookPortal = portal
+		this.hookExitModifier = exitModifier
+	}
+
+	private CastHookOrder(hero: Hero, hook: pudge_meat_hook, point: Vector3): void {
+		hero.CastPosition(hook, point)
 	}
 
 	// The ordered point is only a promise: while the cast animation plays the target can
 	// still break off, and a hook that is already going to miss is worth more cancelled.
 	private WatchHookCancel(hero: Hero): void {
-		const ordered = this.hookOrderPoint
-		if (ordered === undefined) {
+		if (this.hookOrderPoint === undefined) {
 			return
 		}
 		const hook = hero.GetAbilityByClass(pudge_meat_hook)
 		if (hook === undefined) {
 			this.hookOrderPoint = undefined
+			this.hookOrderTarget = undefined
+			this.hookTeleportTimed = false
+			this.hookPortal = undefined
+			this.hookExitModifier = undefined
 			return
 		}
 		if (!hook.IsInAbilityPhase) {
 			if (GameState.RawGameTime - this.hookOrderTime > HOOK_WATCH_GRACE) {
 				this.hookOrderPoint = undefined
+				this.hookTeleportTimed = false
+				this.hookPortal = undefined
+				this.hookExitModifier = undefined
 			}
 			return
 		}
 		const target = this.hookOrderTarget
-		if (target === undefined || !this.IsValidTarget(target)) {
+		const portal = this.hookTeleportTimed ? this.hookPortal : undefined
+		const exitModifier = this.hookExitModifier
+		if (target === undefined && portal === undefined) {
+			this.hookOrderPoint = undefined
+			this.hookTeleportTimed = false
+			this.hookPortal = undefined
+			this.hookExitModifier = undefined
 			return
 		}
-		const solution = this.predictor.Solve(hero, hook, target)
-		const drift = solution.point.Distance2D(ordered)
-		if (solution.chance >= CANCEL_CHANCE && drift <= this.predictor.Width(hook) * CANCEL_DEVIATION) {
+		const elapsed = Math.max(GameState.RawGameTime - hook.CastStartTime, 0)
+		const remainingCast = Math.max(hook.CastPoint - elapsed, 0) + GameState.TickInterval
+		if (portal !== undefined && portal.model.IsCanceled) {
+			hero.OrderStop()
+			this.hookOrderPoint = undefined
+			this.hookOrderTarget = undefined
+			this.hookTeleportTimed = false
+			this.hookPortal = undefined
+			this.hookExitModifier = undefined
+			return
+		}
+		const solution =
+			portal !== undefined
+				? this.predictor.SolvePoint(
+						hero,
+						hook,
+						portal.model.Caster ?? target,
+						this.PortalDestination(portal),
+						this.HookOptions(remainingCast)
+				  )
+				: exitModifier !== undefined && target !== undefined
+				? exitModifier.IsValid && exitModifier.RemainingTime > 0
+					? exitModifier.Name === "modifier_disruptor_glimpse"
+						? this.predictor.SolvePoint(
+								hero,
+								hook,
+								target,
+								this.hookOrderPoint,
+								this.HookOptions(remainingCast)
+						  )
+						: this.ExitSolution(hero, hook, target, exitModifier, remainingCast)
+					: this.predictor.SolvePoint(hero, hook, target, target.Position, this.HookOptions(remainingCast))
+				: this.predictor.Solve(hero, hook, target!, this.HookOptions(remainingCast))
+		const destinationStable =
+			(portal === undefined && exitModifier === undefined) ||
+			solution.point.Distance2D(this.hookOrderPoint) <= this.predictor.Width(hook) + (target?.HullRadius ?? 24)
+		if (solution.reason === "ok" && !solution.blocked && !solution.outOfRange && destinationStable) {
 			return
 		}
 		hero.OrderStop()
 		this.hookOrderPoint = undefined
+		this.hookOrderTarget = undefined
+		this.hookTeleportTimed = false
+		this.hookPortal = undefined
+		this.hookExitModifier = undefined
 	}
 
-	private InstantDismember(hero: Hero, dismember: Nullable<Ability>, victim: Hero): boolean {
-		if (!this.Enabled(DISMEMBER) || !this.Castable(dismember, victim)) {
-			return false
+	private HookOptions(castDelay?: number): IHookPredictOptions {
+		return {
+			allowForced: true,
+			allowMoving: true,
+			predictBlockers: true,
+			castDelay
 		}
-		if (!this.InCastRange(hero, dismember!, victim, this.DragLead(hero, dismember!))) {
-			return false
-		}
-		hero.CastTarget(dismember!, victim)
-		this.LockCast(dismember!)
-		return true
-	}
-
-	private DragLead(hero: Hero, dismember: Ability): number {
-		const hook = hero.GetAbilityByClass(pudge_meat_hook)
-		const speed =
-			hook === undefined ? HOOK_SPEED_FALLBACK : hook.GetBaseSpeedForLevel(hook.Level) || HOOK_SPEED_FALLBACK
-		return speed * dismember.CastDelay
 	}
 
 	// Dota measures a unit-target cast edge to edge, so a centre-to-centre compare is
@@ -426,10 +1060,14 @@ export class PudgeCombo {
 	}
 
 	private IsValidTarget(enemy: Hero): boolean {
+		const trackHidden =
+			enemy.HasBuffByName("modifier_slark_shadow_dance") ||
+			enemy.HasBuffByName("modifier_slark_depth_shroud") ||
+			this.TimedExitModifier(enemy) !== undefined
 		return (
 			enemy.IsValid &&
 			enemy.LifeState === LifeState.LIFE_ALIVE &&
-			enemy.IsVisible &&
+			(enemy.IsVisible || trackHidden) &&
 			enemy.IsEnemy() &&
 			!enemy.IsIllusion
 		)
@@ -488,6 +1126,13 @@ export class PudgeCombo {
 		this.hookOrderPoint = undefined
 		this.hookOrderTarget = undefined
 		this.hookOrderTime = 0
+		this.hookTeleportTimed = false
+		this.hookPortal = undefined
+		this.hookExitModifier = undefined
+		this.fakeHookPending = false
+		this.fakeHookTime = 0
+		this.portals.clear()
+		this.relocatePortals.clear()
 		this.predictor.Reset()
 		this.ClearTarget()
 	}
@@ -495,6 +1140,7 @@ export class PudgeCombo {
 	private GameEnded(): void {
 		this.menu.ComboKey.isPressed = false
 		this.menu.AutoHookKey.isPressed = false
+		this.menu.FakeHookKey.isPressed = false
 		this.Reset()
 	}
 }

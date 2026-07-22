@@ -3,57 +3,117 @@ import {
 	GameState,
 	Hero,
 	pudge_meat_hook,
+	QAngle,
 	Unit,
 	Vector2,
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
-const SAMPLE_WINDOW = 0.6
-const MAX_SAMPLES = 24
-const INSTANT_WINDOW = 0.12
+const HISTORY_WINDOW = 5
+const VELOCITY_WINDOW = 0.14
+const TURN_WINDOW = 0.22
+const MAX_SAMPLES = 256
+const STALE_POSITION = 0.2
 
 const HOOK_SPEED_FALLBACK = 1600
 const HOOK_WIDTH_FALLBACK = 100
 const HOOK_RANGE_FALLBACK = 1000
-
 const MIN_SPEED = 20
-const MIN_TURN_RATE = 0.25
-const FORCED_SPEED_FACTOR = 1.35
-const ZIGZAG_ERRATIC = 3.5
-const SOLVE_PASSES = 4
+const FORCED_SPEED_FACTOR = 1.25
+const MAX_SPEED_FACTOR = 1.65
+const TURNING_RATE = 0.45
+const ERRATIC_TURN_RATE = 1.8
+const INTERCEPT_PASSES = 10
 
-const CHANCE_STATIC = 1
-const CHANCE_FORCED = 0.95
-const CHANCE_MOVING = 0.95
-const CHANCE_ERRATIC = 0.5
-const TURN_UNCERTAINTY = 180
-const ACCEL_UNCERTAINTY = 0.35
-const REACTION_UNCERTAINTY = 0.12
+const BANNED_MODIFIERS = [
+	"modifier_puck_phase_shift",
+	"modifier_obsidian_destroyer_astral_imprisonment_prison",
+	"modifier_shadow_demon_disruption",
+	"modifier_eul_cyclone",
+	"modifier_cyclone",
+	"modifier_invoker_tornado"
+]
+
+const TRACKED_HIDDEN_MODIFIERS = ["modifier_slark_shadow_dance", "modifier_slark_depth_shroud"]
+
+const FORCED_MOVEMENT_MODIFIERS = [
+	"modifier_tiny_toss",
+	"modifier_magnataur_skewer_movement",
+	"modifier_slark_pounce",
+	"modifier_earth_spirit_rolling_boulder_caster",
+	"modifier_phoenix_icarus_dive",
+	"modifier_mirana_leap",
+	"modifier_marci_lunge_arc",
+	"modifier_marci_lunge_tracking_motion",
+	"modifier_wind_waker",
+	"modifier_disruptor_glimpse",
+	"modifier_huskar_life_break_charge",
+	"modifier_snapfire_firesnap_cookie_short_hop",
+	"modifier_spirit_breaker_charge_of_darkness",
+	"modifier_techies_suicide_leap",
+	"modifier_monkey_king_bounce_leap",
+	"modifier_tusk_walrus_kick_air_time",
+	"modifier_knockback",
+	"modifier_item_forcestaff_active",
+	"modifier_item_hurricane_pike_active",
+	"modifier_pangolier_swashbuckle",
+	"modifier_pangolier_shield_crash_jump",
+	"modifier_tusk_snowball_movement",
+	"modifier_tusk_snowball_movement_friendly",
+	"modifier_primal_beast_onslaught_movement_adjustable",
+	"modifier_void_spirit_astral_step_caster",
+	"modifier_tusk_drinking_buddies_pull"
+]
 
 export const enum HookMotion {
 	Static,
 	Forced,
 	Straight,
+	Turning,
 	Erratic
+}
+
+export interface IHookPredictOptions {
+	allowForced: boolean
+	allowMoving: boolean
+	predictBlockers: boolean
+	castDelay?: number
 }
 
 export interface IHookSolution {
 	point: Vector3
 	flightTime: number
+	totalTime: number
 	chance: number
 	blocked: boolean
+	blocker?: Unit
 	outOfRange: boolean
 	motion: HookMotion
+	reason: string
 }
 
 interface ISample {
-	pos: Vector3
+	position: Vector3
 	time: number
-	angle: number
+	heading: number
 }
 
 interface ITrack {
 	samples: ISample[]
+}
+
+interface IMovementModel {
+	motion: HookMotion
+	velocity: Vector3
+	turnRate: number
+	speedChange: number
+}
+
+interface IIntercept {
+	castDelay: number
+	flightTime: number
+	origin: Vector3
+	point: Vector3
 }
 
 export class HookPredictor {
@@ -66,8 +126,7 @@ export class HookPredictor {
 				this.tracks.delete(enemy.Index)
 				continue
 			}
-			if (!enemy.IsVisible) {
-				this.tracks.delete(enemy.Index)
+			if (!enemy.IsVisible && !TRACKED_HIDDEN_MODIFIERS.some(name => enemy.HasBuffByName(name))) {
 				continue
 			}
 			let track = this.tracks.get(enemy.Index)
@@ -75,11 +134,11 @@ export class HookPredictor {
 				track = { samples: [] }
 				this.tracks.set(enemy.Index, track)
 			}
-			track.samples.push({ angle: enemy.RotationRad, pos: enemy.Position.Clone(), time: now })
-			while (track.samples.length > MAX_SAMPLES || now - track.samples[0].time > SAMPLE_WINDOW) {
-				if (track.samples.length <= 2) {
-					break
-				}
+			const last = track.samples[track.samples.length - 1]
+			if (last === undefined || last.time !== now) {
+				track.samples.push({ heading: enemy.RotationRad, position: enemy.Position.Clone(), time: now })
+			}
+			while (track.samples.length > MAX_SAMPLES || now - track.samples[0].time > HISTORY_WINDOW) {
 				track.samples.shift()
 			}
 		}
@@ -89,56 +148,142 @@ export class HookPredictor {
 		this.tracks.clear()
 	}
 
-	public Solve(hero: Hero, hook: pudge_meat_hook, target: Hero): IHookSolution {
+	public HistoricalPosition(target: Hero, secondsAgo: number): Vector3 | undefined {
+		const samples = this.tracks.get(target.Index)?.samples
+		if (samples === undefined || samples.length === 0) {
+			return undefined
+		}
+		const wantedTime = GameState.RawGameTime - Math.max(secondsAgo, 0)
+		let closest = samples[0]
+		let closestDelta = Math.abs(closest.time - wantedTime)
+		for (let index = 1; index < samples.length; index++) {
+			const sample = samples[index]
+			const delta = Math.abs(sample.time - wantedTime)
+			if (delta >= closestDelta) {
+				continue
+			}
+			closest = sample
+			closestDelta = delta
+		}
+		return closest.position.Clone()
+	}
+
+	public Solve(hero: Hero, hook: pudge_meat_hook, target: Hero, options: IHookPredictOptions): IHookSolution {
 		const speed = hook.GetBaseSpeedForLevel(hook.Level) || HOOK_SPEED_FALLBACK
 		const width = this.Width(hook)
-		const range = hook.CastRange > 0 ? hook.CastRange : HOOK_RANGE_FALLBACK
-		const lead = hook.CastDelay + GameState.TickInterval
-		const motion = this.Motion(target)
-		const velocity = this.Velocity(target, motion)
-		const turnRate = motion === HookMotion.Straight ? this.TurnRate(target) : 0
-		const point = this.Intercept(hero, target, velocity, turnRate, speed, lead)
-		const flightTime = hero.Distance2D(point) / speed
-		const total = lead + flightTime
+		const range = hook.GetSpecialValue("hook_distance", hook.Level) || hook.CastRange || HOOK_RANGE_FALLBACK
+		const model = this.Movement(target)
+		const invalid = this.InvalidReason(target, model.motion, options)
+		const intercept = this.Intercept(hero, hook, target, model, speed, options.castDelay)
+		const totalTime = intercept.castDelay + intercept.flightTime
+		const outOfRange = intercept.origin.Distance2D(intercept.point) > range + target.HullRadius
+		const blocker =
+			options.predictBlockers && !outOfRange
+				? this.PathBlocker(hero, target, intercept.origin, intercept.point, width, speed, intercept.castDelay)
+				: undefined
 		return {
-			blocked: this.PathBlocked(hero, width, target, point),
-			chance: this.Chance(target, motion, turnRate, total, width),
-			flightTime,
-			motion,
-			outOfRange: hero.Distance2D(point) > range || hero.Distance2D(target) > range,
-			point
+			blocked: blocker !== undefined,
+			blocker,
+			chance: invalid === undefined ? this.Chance(target, model, totalTime, width) : 0,
+			flightTime: intercept.flightTime,
+			motion: model.motion,
+			outOfRange,
+			point: intercept.point,
+			reason: invalid ?? (outOfRange ? "out of range" : blocker === undefined ? "ok" : "confirmed blocker"),
+			totalTime
 		}
+	}
+
+	public SolvePoint(
+		hero: Hero,
+		hook: pudge_meat_hook,
+		target: Nullable<Unit>,
+		point: Vector3,
+		options: IHookPredictOptions
+	): IHookSolution {
+		const speed = hook.GetBaseSpeedForLevel(hook.Level) || HOOK_SPEED_FALLBACK
+		const width = this.Width(hook)
+		const range = hook.GetSpecialValue("hook_distance", hook.Level) || hook.CastRange || HOOK_RANGE_FALLBACK
+		const angle = new QAngle(0, hero.Position.GetAngleTo(point), 0)
+		const origin = hook.GetProjectileStartingPosition(hero.Position, angle)
+		const castDelay = options.castDelay ?? hook.GetCastDelay(point) + GameState.TickInterval
+		const flightTime = origin.Distance2D(point) / speed
+		const targetHullRadius = target?.HullRadius ?? 24
+		const outOfRange = origin.Distance2D(point) > range + targetHullRadius
+		const blocker =
+			options.predictBlockers && !outOfRange
+				? this.PathBlocker(hero, target, origin, point, width, speed, castDelay)
+				: undefined
+		return {
+			blocked: blocker !== undefined,
+			blocker,
+			chance: 0.99,
+			flightTime,
+			motion: HookMotion.Static,
+			outOfRange,
+			point: point.Clone(),
+			reason: outOfRange ? "out of range" : blocker === undefined ? "ok" : "confirmed blocker",
+			totalTime: castDelay + flightTime
+		}
+	}
+
+	public SolveExit(
+		hero: Hero,
+		hook: pudge_meat_hook,
+		target: Hero,
+		remaining: number,
+		options: IHookPredictOptions
+	): IHookSolution {
+		const movement = this.Movement(target)
+		const point = this.PredictPosition(target, movement.velocity, Math.max(remaining, 0))
+		return this.SolvePoint(hero, hook, target, point, options)
 	}
 
 	public Width(hook: pudge_meat_hook): number {
 		return hook.GetBaseAOERadiusForLevel(hook.Level) || HOOK_WIDTH_FALLBACK
 	}
 
-	// Capsule sweep: anything whose hull touches the flight corridor before the target
-	// eats the hook, ally creeps and summons included.
-	public PathBlocked(hero: Hero, width: number, target: Unit, point: Vector3): boolean {
-		const start = new Vector2(hero.Position.x, hero.Position.y)
-		const end = new Vector2(point.x, point.y)
-		const reach = hero.Distance2D(target)
-		return EntityManager.GetEntitiesByClass(Unit).some(unit => {
-			if (unit === hero || unit === target || !unit.IsValid || !unit.IsAlive) {
-				return false
-			}
-			if (unit.IsBuilding || unit.IsInvulnerable || unit.IsUntargetable || !unit.IsVisible) {
-				return false
-			}
-			if (unit.IsCourier || unit.IsFlyingVisually) {
-				return false
-			}
-			if (hero.Distance2D(unit) >= reach) {
-				return false
-			}
-			const position = new Vector2(unit.Position.x, unit.Position.y)
-			return position.DistanceSegment(start, end, true) <= width + unit.HullRadius
-		})
+	private InvalidReason(target: Hero, motion: HookMotion, options: IHookPredictOptions): string | undefined {
+		if (
+			!target.IsValid ||
+			!target.IsAlive ||
+			target.IsIllusion ||
+			(!target.IsVisible && !TRACKED_HIDDEN_MODIFIERS.some(name => target.HasBuffByName(name)))
+		) {
+			return "invalid target"
+		}
+		if (target.IsInvulnerable || target.IsUntargetable) {
+			return "unhittable target"
+		}
+		if (BANNED_MODIFIERS.some(name => target.HasBuffByName(name))) {
+			return "banished or phased target"
+		}
+		const samples = this.tracks.get(target.Index)?.samples
+		const latest = samples?.[samples.length - 1]
+		if (latest === undefined || GameState.RawGameTime - latest.time > STALE_POSITION) {
+			return "stale position"
+		}
+		if (motion === HookMotion.Forced && !options.allowForced) {
+			return "forced movement disabled"
+		}
+		if (motion !== HookMotion.Static && motion !== HookMotion.Forced && !options.allowMoving) {
+			return "moving targets disabled"
+		}
+		return undefined
 	}
 
-	private Motion(target: Hero): HookMotion {
+	private Movement(target: Hero): IMovementModel {
+		const measured = this.MeasuredVelocity(target, VELOCITY_WINDOW)
+		const forced = FORCED_MOVEMENT_MODIFIERS.some(name => target.HasBuffByName(name))
+		const forcedBySpeed = measured.Length2D > Math.max(target.MoveSpeed, 1) * FORCED_SPEED_FACTOR
+		if (forced || forcedBySpeed) {
+			return {
+				motion: HookMotion.Forced,
+				speedChange: this.SpeedChange(target),
+				turnRate: 0,
+				velocity: measured.Length2D >= MIN_SPEED ? measured : target.Forward.MultiplyScalar(target.MoveSpeed)
+			}
+		}
 		if (
 			target.IsStunned ||
 			target.IsRooted ||
@@ -147,94 +292,202 @@ export class HookPredictor {
 			target.IsInAbilityPhase ||
 			!target.IsMoving
 		) {
-			return HookMotion.Static
+			return { motion: HookMotion.Static, speedChange: 0, turnRate: 0, velocity: new Vector3() }
 		}
-		const measured = this.InstantVelocity(target).Length2D
-		if (measured > Math.max(target.MoveSpeed, 1) * FORCED_SPEED_FACTOR) {
-			return HookMotion.Forced
+
+		const turnRate = this.TurnRate(target)
+		const zigZag = this.HeadingTravel(target)
+		const motion =
+			zigZag >= ERRATIC_TURN_RATE
+				? HookMotion.Erratic
+				: Math.abs(turnRate) >= TURNING_RATE
+				? HookMotion.Turning
+				: HookMotion.Straight
+		return {
+			motion,
+			speedChange: this.SpeedChange(target),
+			turnRate,
+			velocity: this.IntendedVelocity(target, measured)
 		}
-		return this.ZigZag(target) >= ZIGZAG_ERRATIC ? HookMotion.Erratic : HookMotion.Straight
 	}
 
-	// Falls back to heading * MoveSpeed: a target seen for only a tick or two has no
-	// usable sample delta yet, and returning a zero vector there would silently degrade
-	// every solve into "hook where he stands".
-	private Velocity(target: Hero, motion: HookMotion): Vector3 {
-		if (motion === HookMotion.Static) {
-			return new Vector3()
-		}
-		const measured = motion === HookMotion.Erratic ? this.AverageVelocity(target) : this.InstantVelocity(target)
+	// Position samples trail the networked facing angle during turns. Use them for
+	// actual speed, but use the current facing for the future movement direction.
+	private IntendedVelocity(target: Hero, measured: Vector3): Vector3 {
+		let speed = target.MoveSpeed
 		if (measured.Length2D >= MIN_SPEED) {
-			return measured
+			speed = Math.min(Math.max(measured.Length2D, speed * 0.75), speed * 1.15)
 		}
-		return target.IsMoving ? target.Forward.MultiplyScalar(target.MoveSpeed) : new Vector3()
+		return target.Forward.MultiplyScalar(speed)
 	}
 
-	private InstantVelocity(target: Hero): Vector3 {
-		const track = this.tracks.get(target.Index)
-		if (track === undefined || track.samples.length < 2) {
+	private Intercept(
+		hero: Hero,
+		hook: pudge_meat_hook,
+		target: Hero,
+		model: IMovementModel,
+		projectileSpeed: number,
+		castDelayOverride?: number
+	): IIntercept {
+		let point = target.Position
+		let origin = hero.Position
+		let castDelay = hook.CastDelay + GameState.TickInterval
+		let flightTime = hero.Distance2D(target) / projectileSpeed
+
+		for (let pass = 0; pass < INTERCEPT_PASSES; pass++) {
+			const angle = new QAngle(0, hero.Position.GetAngleTo(point), 0)
+			origin = hook.GetProjectileStartingPosition(hero.Position, angle)
+			castDelay = castDelayOverride ?? hook.GetCastDelay(point) + GameState.TickInterval
+			flightTime = origin.Distance2D(point) / projectileSpeed
+			point = this.PredictPosition(target, model.velocity, castDelay + flightTime)
+		}
+
+		flightTime = origin.Distance2D(point) / projectileSpeed
+		return { castDelay, flightTime, origin, point }
+	}
+
+	private PredictPosition(target: Unit, velocity: Vector3, time: number): Vector3 {
+		const speed = velocity.Length2D
+		if (speed < MIN_SPEED || time <= 0) {
+			return target.Position
+		}
+		return target.ExtendUntilWall(target.Position, velocity.Clone().Normalize(), speed * time)
+	}
+
+	private Chance(target: Hero, model: IMovementModel, totalTime: number, width: number): number {
+		if (model.motion === HookMotion.Static) {
+			return 0.99
+		}
+		if (model.motion === HookMotion.Forced) {
+			return 0.94
+		}
+		const base = model.motion === HookMotion.Straight ? 0.97 : model.motion === HookMotion.Turning ? 0.78 : 0.58
+		const turnError = Math.min(Math.abs(model.turnRate), Math.PI) * target.MoveSpeed * totalTime * 0.12
+		const speedError = model.speedChange * Math.min(totalTime, 1) * 0.3
+		const uncertainty = turnError + speedError
+		return (base * (width + target.HullRadius)) / (width + target.HullRadius + uncertainty)
+	}
+
+	private PathBlocker(
+		hero: Hero,
+		target: Nullable<Unit>,
+		origin: Vector3,
+		point: Vector3,
+		width: number,
+		projectileSpeed: number,
+		castDelay: number
+	): Unit | undefined {
+		const direction = origin.GetDirection2DTo(point)
+		const targetDistance = origin.Distance2D(point)
+		const start = new Vector2(origin.x, origin.y)
+		const end = new Vector2(point.x, point.y)
+		let first: Unit | undefined
+		let firstDistance = Number.MAX_VALUE
+
+		for (const unit of EntityManager.GetEntitiesByClass(Unit)) {
+			if (!this.CanBlock(hero, target, unit)) {
+				continue
+			}
+			const initialAlong = unit.Position.Subtract(origin).Dot(direction)
+			if (initialAlong <= 0 || initialAlong >= targetDistance || initialAlong >= firstDistance) {
+				continue
+			}
+			const hitTime = castDelay + initialAlong / projectileSpeed
+			const projected = this.ProjectBlocker(unit, hitTime)
+			const along = projected.Subtract(origin).Dot(direction)
+			if (along <= 0 || along >= targetDistance - (target?.HullRadius ?? 24) || along >= firstDistance) {
+				continue
+			}
+			const projected2D = new Vector2(projected.x, projected.y)
+			if (projected2D.DistanceSegment(start, end, true) > width + unit.HullRadius) {
+				continue
+			}
+			first = unit
+			firstDistance = along
+		}
+		return first
+	}
+
+	private CanBlock(hero: Hero, target: Nullable<Unit>, unit: Unit): boolean {
+		return (
+			unit !== hero &&
+			unit !== target &&
+			unit.IsValid &&
+			unit.IsAlive &&
+			unit.IsVisible &&
+			!unit.IsBuilding &&
+			!unit.IsCourier &&
+			!unit.IsInvulnerable &&
+			!unit.IsUntargetable &&
+			!unit.IsFlyingVisually
+		)
+	}
+
+	private ProjectBlocker(unit: Unit, time: number): Vector3 {
+		if (!unit.IsMoving || unit.MoveSpeed < MIN_SPEED) {
+			return unit.Position
+		}
+		return unit.ExtendUntilWall(unit.Position, unit.Forward, unit.MoveSpeed * Math.max(time, 0))
+	}
+
+	private MeasuredVelocity(target: Hero, window: number): Vector3 {
+		const samples = this.tracks.get(target.Index)?.samples
+		if (samples === undefined || samples.length < 2) {
 			return new Vector3()
 		}
-		const samples = track.samples
 		const last = samples[samples.length - 1]
 		let first = samples[0]
-		for (let i = samples.length - 2; i >= 0; i--) {
-			first = samples[i]
-			if (last.time - first.time >= INSTANT_WINDOW) {
+		for (let index = samples.length - 2; index >= 0; index--) {
+			first = samples[index]
+			if (last.time - first.time >= window) {
 				break
 			}
 		}
-		const dt = last.time - first.time
-		if (dt <= 0) {
-			return new Vector3()
-		}
-		return last.pos.Subtract(first.pos).MultiplyScalar(1 / dt)
+		const elapsed = last.time - first.time
+		return elapsed <= 0 ? new Vector3() : last.position.Subtract(first.position).MultiplyScalar(1 / elapsed)
 	}
 
-	private AverageVelocity(target: Hero): Vector3 {
-		const track = this.tracks.get(target.Index)
-		if (track === undefined || track.samples.length < 2) {
-			return new Vector3()
-		}
-		const samples = track.samples
-		const first = samples[0]
-		const last = samples[samples.length - 1]
-		const dt = last.time - first.time
-		if (dt <= 0) {
-			return new Vector3()
-		}
-		return last.pos.Subtract(first.pos).MultiplyScalar(1 / dt)
+	private SpeedChange(target: Hero): number {
+		const short = this.MeasuredVelocity(target, VELOCITY_WINDOW).Length2D
+		const long = this.MeasuredVelocity(target, HISTORY_WINDOW * 0.8).Length2D
+		return Math.min(Math.abs(short - long), target.MoveSpeed * MAX_SPEED_FACTOR)
 	}
 
 	private TurnRate(target: Hero): number {
-		const track = this.tracks.get(target.Index)
-		if (track === undefined || track.samples.length < 3) {
+		const samples = this.tracks.get(target.Index)?.samples
+		if (samples === undefined || samples.length < 2) {
 			return 0
 		}
-		const samples = track.samples
-		const first = samples[0]
 		const last = samples[samples.length - 1]
-		const dt = last.time - first.time
-		if (dt <= 0) {
-			return 0
+		let first = samples[0]
+		for (let index = samples.length - 2; index >= 0; index--) {
+			first = samples[index]
+			if (last.time - first.time >= TURN_WINDOW) {
+				break
+			}
 		}
-		return this.NormalizeAngle(last.angle - first.angle) / dt
+		const elapsed = last.time - first.time
+		return elapsed <= 0 ? 0 : this.NormalizeAngle(last.heading - first.heading) / elapsed
 	}
 
-	// Total heading travel per second. A hero holding a curve scores low, one flicking
-	// left-right every few ticks scores high even though its net rotation is zero.
-	private ZigZag(target: Hero): number {
-		const track = this.tracks.get(target.Index)
-		if (track === undefined || track.samples.length < 3) {
+	private HeadingTravel(target: Hero): number {
+		const samples = this.tracks.get(target.Index)?.samples
+		if (samples === undefined || samples.length < 3) {
 			return 0
 		}
-		const samples = track.samples
+		const lastTime = samples[samples.length - 1].time
 		let travel = 0
-		for (let i = 1; i < samples.length; i++) {
-			travel += Math.abs(this.NormalizeAngle(samples[i].angle - samples[i - 1].angle))
+		let elapsed = 0
+		for (let index = samples.length - 1; index > 0; index--) {
+			const current = samples[index]
+			const previous = samples[index - 1]
+			if (lastTime - previous.time > TURN_WINDOW) {
+				break
+			}
+			travel += Math.abs(this.NormalizeAngle(current.heading - previous.heading))
+			elapsed = lastTime - previous.time
 		}
-		const dt = samples[samples.length - 1].time - samples[0].time
-		return dt <= 0 ? 0 : travel / dt
+		return elapsed <= 0 ? 0 : travel / elapsed
 	}
 
 	private NormalizeAngle(angle: number): number {
@@ -246,102 +499,5 @@ export class HookPredictor {
 			value += Math.PI * 2
 		}
 		return value
-	}
-
-	// Seed with the closed-form straight-line intercept, then refine against the curved
-	// and wall-clamped path — the real equation has no closed form once the target turns.
-	private Intercept(
-		hero: Hero,
-		target: Hero,
-		velocity: Vector3,
-		turnRate: number,
-		speed: number,
-		lead: number
-	): Vector3 {
-		if (velocity.Length2D < MIN_SPEED) {
-			return target.Position
-		}
-		let flight = this.StraightFlightTime(hero, target, velocity, speed, lead)
-		let point = target.Position
-		for (let i = 0; i < SOLVE_PASSES; i++) {
-			point = this.Extrapolate(target, velocity, turnRate, lead + flight)
-			flight = hero.Distance2D(point) / speed
-		}
-		return point
-	}
-
-	private StraightFlightTime(hero: Hero, target: Hero, velocity: Vector3, speed: number, lead: number): number {
-		const origin = target.Position.Add(velocity.MultiplyScalar(lead)).Subtract(hero.Position)
-		const a = velocity.Dot(velocity) - speed * speed
-		const b = 2 * origin.Dot(velocity)
-		const c = origin.Dot(origin)
-		if (Math.abs(a) < 1e-4) {
-			return Math.abs(b) < 1e-4 ? 0 : Math.max(-c / b, 0)
-		}
-		const discriminant = b * b - 4 * a * c
-		if (discriminant < 0) {
-			return origin.Length2D / speed
-		}
-		const root = Math.sqrt(discriminant)
-		const first = (-b - root) / (2 * a)
-		const second = (-b + root) / (2 * a)
-		const positives = [first, second].filter(value => value > 0)
-		return positives.length === 0 ? origin.Length2D / speed : Math.min(...positives)
-	}
-
-	// Constant-turn-rate arc, then clamped against the nav grid so a target running into
-	// a cliff or a tree line is not extrapolated through it.
-	private Extrapolate(target: Hero, velocity: Vector3, turnRate: number, time: number): Vector3 {
-		const speed = velocity.Length2D
-		if (speed < MIN_SPEED || time <= 0) {
-			return target.Position
-		}
-		const heading = velocity.Normalize()
-		if (Math.abs(turnRate) < MIN_TURN_RATE) {
-			return target.ExtendUntilWall(target.Position, heading, speed * time)
-		}
-		const theta = turnRate * time
-		const radius = speed / turnRate
-		const side = new Vector3(-heading.y, heading.x, 0)
-		const local = heading
-			.MultiplyScalar(Math.sin(theta) * radius)
-			.Add(side.MultiplyScalar((1 - Math.cos(theta)) * radius))
-		const distance = local.Length2D
-		if (distance < 1) {
-			return target.Position
-		}
-		return target.ExtendUntilWall(target.Position, local.Normalize(), distance)
-	}
-
-	// Lateral error the target can still introduce before the hook arrives, measured
-	// against the corridor half-width: the wider the hook, the more slop it forgives.
-	private Chance(target: Hero, motion: HookMotion, turnRate: number, total: number, width: number): number {
-		if (motion === HookMotion.Static) {
-			return CHANCE_STATIC
-		}
-		const base =
-			motion === HookMotion.Forced
-				? CHANCE_FORCED
-				: motion === HookMotion.Erratic
-				? CHANCE_ERRATIC
-				: CHANCE_MOVING
-		if (motion === HookMotion.Forced) {
-			return base
-		}
-		const turnError = Math.abs(turnRate) * total * TURN_UNCERTAINTY
-		const accelError = this.AccelerationError(target, total) * ACCEL_UNCERTAINTY
-		// Only a target that has actually been changing direction is charged for the
-		// direction change it might still make. A hero holding one course for the whole
-		// sample window is as predictable as a standing one.
-		const steadiness = Math.min(this.ZigZag(target) / ZIGZAG_ERRATIC, 1)
-		const reactError = target.MoveSpeed * total * REACTION_UNCERTAINTY * steadiness
-		const sigma = turnError + accelError + reactError
-		return base * (width / (width + sigma))
-	}
-
-	private AccelerationError(target: Hero, total: number): number {
-		const instant = this.InstantVelocity(target)
-		const average = this.AverageVelocity(target)
-		return instant.Subtract(average).Length2D * total
 	}
 }

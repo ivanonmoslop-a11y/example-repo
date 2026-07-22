@@ -39,6 +39,7 @@ const ROLL_SPEED_FALLBACK = 1600
 const ROLL_REACH = 1660
 const SMASH_REACH = 2160
 const SMASH_PICKUP_RADIUS = 150
+const ROLL_HIT_RADIUS = 160
 const STONE_BASE_RANGE = 1100
 const MAGNETIZE_RADIUS = 400
 const MAGNETIZE_SPREAD_RADIUS = 400
@@ -128,11 +129,11 @@ export class ComboManager {
 				this.Cast(hero, rolling!, aim)
 				return
 			}
-			const stonePosition = hero.Position.Extend(aim, ROLL_PLACE_DISTANCE)
-			if (this.HasStoneNear(stonePosition, STONE_NEAR_RADIUS)) {
+			if (this.HasStoneOnRollPath(hero, aim)) {
 				this.Cast(hero, rolling!, aim)
 				return
 			}
+			const stonePosition = hero.Position.Extend(aim, ROLL_PLACE_DISTANCE)
 			if (this.PlaceStone(hero, stone, stonePosition)) {
 				return
 			}
@@ -346,6 +347,23 @@ export class ComboManager {
 	private LockCast(ability: Ability): void {
 		this.pendingAbility = ability
 		this.pendingTime = GameState.RawGameTime
+	}
+
+	private HasStoneOnRollPath(hero: npc_dota_hero_earth_spirit, aim: Vector3): boolean {
+		if (hero.Distance2D(aim) < 1) {
+			return false
+		}
+		const origin = hero.Position
+		const finish = origin.Extend(aim, ROLL_REACH)
+		const start = new Vector2(origin.x, origin.y)
+		const end = new Vector2(finish.x, finish.y)
+		return EntityManager.GetEntitiesByClass(EarthSpiritStone).some(stone => {
+			if (!stone.IsValid || !stone.IsAlive || stone.IsEnemy()) {
+				return false
+			}
+			const position = new Vector2(stone.Position.x, stone.Position.y)
+			return position.DistanceSegment(start, end, true) <= ROLL_HIT_RADIUS
+		})
 	}
 
 	private HasStoneNear(position: Vector3, radius: number): boolean {

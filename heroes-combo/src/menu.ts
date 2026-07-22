@@ -1,5 +1,7 @@
 import { AbilityData, ImageData, Menu } from "github.com/octarine-public/wrapper/index"
 
+import { PudgeMenu } from "./pudge-menu"
+
 AbilityData.ShouldBeDrawable.add("earth_spirit_stone_caller")
 
 const ICONS_PER_ROW = 5
@@ -10,7 +12,7 @@ interface IImageSelectorLayout {
 	values: string[]
 }
 
-function SquareIcons(selector: Menu.ImageSelector): Menu.ImageSelector {
+export function SquareIcons(selector: Menu.ImageSelector): Menu.ImageSelector {
 	const update = selector.Update.bind(selector)
 	const layout = selector as unknown as IImageSelectorLayout
 	selector.Update = () => {
@@ -192,4 +194,5 @@ export class MenuManager {
 	public readonly Universal = this.base.AddNode("Universal", ImageData.Icons.primary_attribute_all)
 
 	public readonly EarthSpirit = new EarthSpiritMenu(this.Strength)
+	public readonly Pudge = new PudgeMenu(this.Strength)
 }

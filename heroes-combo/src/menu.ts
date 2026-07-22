@@ -2,6 +2,31 @@ import { AbilityData, ImageData, Menu } from "github.com/octarine-public/wrapper
 
 AbilityData.ShouldBeDrawable.add("earth_spirit_stone_caller")
 
+const ICONS_PER_ROW = 5
+
+interface IImageSelectorLayout {
+	imageSize: { x: number; y: number }
+	Size: { x: number }
+	values: string[]
+}
+
+function SquareIcons(selector: Menu.ImageSelector): Menu.ImageSelector {
+	const update = selector.Update.bind(selector)
+	const layout = selector as unknown as IImageSelectorLayout
+	selector.Update = () => {
+		if (!update()) {
+			return false
+		}
+		const extra = layout.imageSize.x - layout.imageSize.y
+		if (extra > 0) {
+			layout.imageSize.x = layout.imageSize.y
+			layout.Size.x -= extra * Math.min(layout.values.length, ICONS_PER_ROW)
+		}
+		return true
+	}
+	return selector
+}
+
 const COMBO_ABILITIES = [
 	"earth_spirit_stone_caller",
 	"earth_spirit_geomagnetic_grip",
@@ -72,19 +97,23 @@ export class EarthSpiritMenu {
 			"None",
 			"Пока зажата: спамит скиллы по ближайшему\nк курсору врагу по мере отката —\nStone → Grip → Rolling → Smash → Magnetize"
 		)
-		this.ComboAbilities = combo.AddImageSelector(
-			"Способности",
-			COMBO_ABILITIES,
-			new Map(COMBO_ABILITIES.map(name => [name, true])),
-			"Клик по иконке — вкл/выкл скилл в комбо",
-			true
+		this.ComboAbilities = SquareIcons(
+			combo.AddImageSelector(
+				"Способности",
+				COMBO_ABILITIES,
+				new Map(COMBO_ABILITIES.map(name => [name, true])),
+				"Клик по иконке — вкл/выкл скилл в комбо",
+				true
+			)
 		)
-		this.ComboItems = combo.AddImageSelector(
-			"Предметы",
-			COMBO_ITEMS,
-			new Map(COMBO_ITEMS.map(name => [name, true])),
-			"Клик по иконке — вкл/выкл предмет в комбо.\nПорядок применения — как в списке",
-			true
+		this.ComboItems = SquareIcons(
+			combo.AddImageSelector(
+				"Предметы",
+				COMBO_ITEMS,
+				new Map(COMBO_ITEMS.map(name => [name, true])),
+				"Клик по иконке — вкл/выкл предмет в комбо.\nПорядок применения — как в списке",
+				true
+			)
 		)
 		this.ShowDebug = combo.AddToggle(
 			"Show Debug",

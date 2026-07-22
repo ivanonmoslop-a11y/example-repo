@@ -26,7 +26,7 @@ import {
 import { EarthSpiritMenu } from "./menu"
 
 const PETRIFY_ABILITY = "earth_spirit_petrify"
-const PETRIFY_MODIFIER = "modifier_earth_spirit_petrify"
+const PETRIFY_MODIFIERS = ["modifier_earthspirit_petrify", "modifier_earth_spirit_petrify"]
 const LINKEN_MODIFIER = "modifier_item_sphere_target"
 const BKB_MODIFIER = "modifier_black_king_bar_immune"
 const LINKEN_BREAKERS = [
@@ -147,7 +147,7 @@ export class FountainKick {
 		if (
 			petrify !== undefined &&
 			petrify.CanBeCasted() &&
-			!enemy.HasBuffByName(PETRIFY_MODIFIER) &&
+			!this.IsStone(enemy) &&
 			!enemy.HasBuffByName(BKB_MODIFIER)
 		) {
 			if (distance <= petrify.CastRange) {
@@ -267,11 +267,15 @@ export class FountainKick {
 	}
 
 	private Petrified(hero: npc_dota_hero_earth_spirit, enemy: Hero): boolean {
-		if (enemy.HasBuffByName(PETRIFY_MODIFIER)) {
+		if (this.IsStone(enemy)) {
 			return true
 		}
 		const petrify = hero.GetAbilityByName(PETRIFY_ABILITY)
 		return petrify !== undefined && petrify.Level > 0 && petrify.CanBeCasted()
+	}
+
+	private IsStone(enemy: Hero): boolean {
+		return PETRIFY_MODIFIERS.some(name => enemy.HasBuffByName(name))
 	}
 
 	private FlightSpecial(smash: Nullable<earth_spirit_boulder_smash>, names: string[], fallback: number): number {

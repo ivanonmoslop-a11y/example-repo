@@ -151,7 +151,7 @@ export class FountainKick {
 				this.lastOrderTime = GameState.RawGameTime
 				return
 			}
-			if (this.Blink(hero, enemy, distance)) {
+			if (this.Blink(hero, enemy, fountain, distance)) {
 				return
 			}
 		}
@@ -164,14 +164,18 @@ export class FountainKick {
 			return
 		}
 
-		if (this.Blink(hero, enemy, distance)) {
+		if (this.Blink(hero, enemy, fountain, distance)) {
 			return
 		}
-		hero.MoveTo(enemy.Position.Extend(hero.Position, APPROACH_DISTANCE))
+		hero.MoveTo(this.KickSpot(enemy, fountain))
 		this.lastOrderTime = GameState.RawGameTime
 	}
 
-	private Blink(hero: npc_dota_hero_earth_spirit, enemy: Hero, distance: number): boolean {
+	private KickSpot(enemy: Hero, fountain: Fountain): Vector3 {
+		return enemy.Position.Extend(fountain.Position, -APPROACH_DISTANCE)
+	}
+
+	private Blink(hero: npc_dota_hero_earth_spirit, enemy: Hero, fountain: Fountain, distance: number): boolean {
 		if (!this.menu.FountainBlink.value) {
 			return false
 		}
@@ -182,7 +186,7 @@ export class FountainKick {
 		if (blink === undefined) {
 			return false
 		}
-		const landing = enemy.Position.Extend(hero.Position, APPROACH_DISTANCE)
+		const landing = this.KickSpot(enemy, fountain)
 		hero.CastPosition(blink, this.ClampToRange(hero, landing, blink.CastRange))
 		this.lastOrderTime = GameState.RawGameTime
 		return true
@@ -243,7 +247,11 @@ export class FountainKick {
 	}
 
 	private CanReachFountain(enemy: Hero, fountain: Fountain): boolean {
-		return enemy.Distance2D(fountain) <= KICK_FLIGHT + FOUNTAIN_RADIUS
+		return enemy.Distance2D(fountain) <= KICK_FLIGHT + this.FountainReach(enemy, fountain)
+	}
+
+	private FountainReach(enemy: Hero, fountain: Fountain): number {
+		return Math.max(fountain.GetAttackRange(enemy), FOUNTAIN_RADIUS)
 	}
 
 	private IsValidTarget(enemy: Hero): boolean {

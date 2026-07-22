@@ -36,6 +36,9 @@ const GRIP_STONE_BEHIND = 150
 const ROLL_PLACE_DISTANCE = 250
 const ROLL_CLOSE_RANGE = 300
 const ROLL_SPEED_FALLBACK = 1600
+const ROLL_BASE_DISTANCE = 1500
+const ROLL_HITBOX_RADIUS = 160
+const ROLL_DISTANCE_SPECIALS = ["distance", "rock_distance", "roll_distance", "range"]
 const STONE_RANGE_FALLBACK = 500
 const TARGET_LINE_KEY = "heroes_combo_target_line"
 const TARGET_LINE_COLOR = new Color(255, 40, 40)
@@ -249,13 +252,13 @@ export class ComboManager {
 	}
 
 	private RollDistance(rolling: earth_spirit_rolling_boulder): number {
-		const distance = rolling.GetSpecialValue("distance")
-		if (distance > 0) {
-			return distance
+		for (const name of ROLL_DISTANCE_SPECIALS) {
+			const value = rolling.GetSpecialValue(name)
+			if (value > 0) {
+				return value + ROLL_HITBOX_RADIUS
+			}
 		}
-		const speed = rolling.GetBaseSpeedForLevel(rolling.Level) || ROLL_SPEED_FALLBACK
-		const duration = rolling.GetSpecialValue("duration")
-		return duration > 0 ? speed * duration : speed
+		return ROLL_BASE_DISTANCE + ROLL_HITBOX_RADIUS
 	}
 
 	private CastAuto(hero: npc_dota_hero_earth_spirit, ability: Ability, enemy: Hero): void {

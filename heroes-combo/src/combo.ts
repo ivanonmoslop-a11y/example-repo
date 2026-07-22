@@ -52,6 +52,8 @@ const STONE_PENDING_TIME = 0.5
 const ITEM_SELF_RANGE = 700
 const ITEM_ENGAGE_RANGE = 600
 const ITEM_CHASE_RANGE = 400
+const BLINK_MIN_RANGE = 400
+const BLINK_MAX_RANGE = 1300
 const SOUL_RING_MIN_HP = 25
 const SATANIC_MAX_HP = 20
 const SHIVA_RADIUS = 900
@@ -202,7 +204,7 @@ export class ComboManager {
 			if (item === undefined || !item.CanBeCasted()) {
 				continue
 			}
-			if (distance > this.ItemRange(item)) {
+			if (distance > this.ItemRange(name, item)) {
 				continue
 			}
 			if (!this.ItemAllowed(name, item, hero, enemy, distance, spellsSpent)) {
@@ -231,7 +233,7 @@ export class ComboManager {
 			case "item_boots_of_bearing":
 				return distance > ITEM_CHASE_RANGE
 			case "item_blink":
-				return distance > ITEM_CHASE_RANGE
+				return distance > BLINK_MIN_RANGE
 			case "item_harpoon":
 				return distance > hero.GetAttackRange(enemy)
 			case "item_shivas_guard":
@@ -283,7 +285,10 @@ export class ComboManager {
 		})
 	}
 
-	private ItemRange(item: Item): number {
+	private ItemRange(name: string, item: Item): number {
+		if (name === "item_blink") {
+			return BLINK_MAX_RANGE
+		}
 		const range = item.CastRange
 		return range > 0 ? range : ITEM_SELF_RANGE
 	}

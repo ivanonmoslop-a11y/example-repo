@@ -2,6 +2,7 @@ import {
 	Ability,
 	Color,
 	DOTA_ABILITY_BEHAVIOR,
+	DOTA_UNIT_TARGET_TEAM,
 	DOTAGameState,
 	DOTAGameUIState,
 	earth_spirit_boulder_smash,
@@ -16,6 +17,7 @@ import {
 	GameState,
 	Hero,
 	InputManager,
+	Item,
 	LifeState,
 	LocalPlayer,
 	npc_dota_hero_earth_spirit,
@@ -25,7 +27,7 @@ import {
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
-import { EarthSpiritMenu } from "./menu"
+import { COMBO_ITEMS, EarthSpiritMenu } from "./menu"
 
 const MAGNETIZE_MODIFIER = "modifier_earth_spirit_magnetize"
 const PETRIFY_ABILITY = "earth_spirit_petrify"
@@ -47,6 +49,7 @@ const MAGNETIZE_SPREAD_RADIUS = 400
 const MAGNETIZE_REFRESH_TIME = 0.8
 const MAGNETIZE_REFRESH_LOCK = 1
 const STONE_PENDING_TIME = 0.5
+const ITEM_SELF_RANGE = 700
 const TARGET_LINE_KEY = "heroes_combo_target_line"
 const TARGET_LINE_COLOR = new Color(255, 40, 40)
 
@@ -108,6 +111,10 @@ export class ComboManager {
 		const distance = hero.Distance2D(enemy)
 
 		if (this.RefreshMagnetize(hero, stone, enemy, distance)) {
+			return
+		}
+
+		if (this.UseItems(hero, enemy, distance)) {
 			return
 		}
 
@@ -177,6 +184,44 @@ export class ComboManager {
 		}
 
 		this.Attack(hero, enemy)
+	}
+
+	private UseItems(hero: npc_dota_hero_earth_spirit, enemy: Hero, distance: number): boolean {
+		for (const name of COMBO_ITEMS) {
+			if (!this.menu.ComboItems.IsEnabled(name)) {
+				continue
+			}
+			const item = this.FindItem(hero, name)
+			if (item === undefined || !item.CanBeCasted()) {
+				continue
+			}
+			if (distance > this.ItemRange(item)) {
+				continue
+			}
+			this.CastAuto(hero, item, enemy)
+			return true
+		}
+		return false
+	}
+
+	private FindItem(hero: npc_dota_hero_earth_spirit, name: string): Nullable<Item> {
+		return hero.Items.find(item => {
+			if (item.Name === name) {
+				return true
+			}
+			if (name === "item_blink") {
+				return item.Name.endsWith("blink")
+			}
+			if (name === "item_dagon_5") {
+				return item.Name.startsWith("item_dagon")
+			}
+			return false
+		})
+	}
+
+	private ItemRange(item: Item): number {
+		const range = item.CastRange
+		return range > 0 ? range : ITEM_SELF_RANGE
 	}
 
 	private RefreshMagnetize(
@@ -315,14 +360,20 @@ export class ComboManager {
 	}
 
 	private CastAuto(hero: npc_dota_hero_earth_spirit, ability: Ability, enemy: Hero): void {
-		if (ability.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_NO_TARGET)) {
-			hero.CastNoTarget(ability)
-		} else if (ability.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_UNIT_TARGET)) {
-			hero.CastTarget(ability, enemy)
+		if (ability.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_UNIT_TARGET)) {
+			hero.CastTarget(ability, this.TargetsEnemies(ability) ? enemy : hero)
+		} else if (ability.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_POINT)) {
+			hero.CastPosition(ability, this.ClampToRange(hero, enemy.Position, ability.CastRange))
+		} else if (ability.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_TOGGLE)) {
+			hero.CastToggle(ability)
 		} else {
-			hero.CastPosition(ability, enemy.Position)
+			hero.CastNoTarget(ability)
 		}
 		this.LockCast(ability)
+	}
+
+	private TargetsEnemies(ability: Ability): boolean {
+		return ability.TargetTeamMask.hasMask(DOTA_UNIT_TARGET_TEAM.DOTA_UNIT_TARGET_TEAM_ENEMY)
 	}
 
 	private StoneRange(hero: npc_dota_hero_earth_spirit, stone: Nullable<earth_spirit_stone_caller>): number {

@@ -11,10 +11,48 @@ const COMBO_ABILITIES = [
 	"earth_spirit_petrify"
 ]
 
+export const COMBO_ITEMS = [
+	"item_soul_ring",
+	"item_armlet",
+	"item_mjollnir",
+	"item_blink",
+	"item_abyssal_blade",
+	"item_manta",
+	"item_satanic",
+	"item_sheepstick",
+	"item_orchid",
+	"item_bloodthorn",
+	"item_nullifier",
+	"item_rod_of_atos",
+	"item_gungir",
+	"item_diffusal_blade",
+	"item_disperser",
+	"item_ethereal_blade",
+	"item_dagon_5",
+	"item_heavens_halberd",
+	"item_urn_of_shadows",
+	"item_spirit_vessel",
+	"item_veil_of_discord",
+	"item_shivas_guard",
+	"item_pipe",
+	"item_lotus_orb",
+	"item_black_king_bar",
+	"item_blade_mail",
+	"item_ancient_janggo",
+	"item_boots_of_bearing",
+	"item_mask_of_madness",
+	"item_invis_sword",
+	"item_silver_edge",
+	"item_blood_grenade",
+	"item_harpoon",
+	"item_refresher"
+]
+
 export class EarthSpiritMenu {
 	public readonly State: Menu.Toggle
 	public readonly ComboKey: Menu.KeyBind
 	public readonly ComboAbilities: Menu.ImageSelector
+	public readonly ComboItems: Menu.ImageSelector
 	public readonly ShowDebug: Menu.Toggle
 	public readonly AutoRemnant: Menu.Toggle
 	public readonly BoulderSmash: Menu.Toggle
@@ -39,6 +77,13 @@ export class EarthSpiritMenu {
 			COMBO_ABILITIES,
 			new Map(COMBO_ABILITIES.map(name => [name, true])),
 			"Клик по иконке — вкл/выкл скилл в комбо",
+			true
+		)
+		this.ComboItems = combo.AddImageSelector(
+			"Предметы",
+			COMBO_ITEMS,
+			new Map(COMBO_ITEMS.map(name => [name, true])),
+			"Клик по иконке — вкл/выкл предмет в комбо.\nПорядок применения — как в списке",
 			true
 		)
 		this.ShowDebug = combo.AddToggle(

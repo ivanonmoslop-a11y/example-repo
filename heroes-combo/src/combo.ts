@@ -36,10 +36,9 @@ const GRIP_STONE_BEHIND = 150
 const ROLL_PLACE_DISTANCE = 250
 const ROLL_CLOSE_RANGE = 300
 const ROLL_SPEED_FALLBACK = 1600
-const ROLL_BASE_DISTANCE = 1500
-const ROLL_HITBOX_RADIUS = 160
-const ROLL_DISTANCE_SPECIALS = ["distance", "rock_distance", "roll_distance", "range"]
-const STONE_RANGE_FALLBACK = 500
+const ROLL_REACH = 1660
+const SMASH_REACH = 2160
+const STONE_BASE_RANGE = 1100
 const TARGET_LINE_KEY = "heroes_combo_target_line"
 const TARGET_LINE_COLOR = new Color(255, 40, 40)
 
@@ -103,7 +102,7 @@ export class ComboManager {
 				this.Cast(hero, grip!, enemy.Position)
 				return
 			}
-			if (distance + GRIP_STONE_BEHIND <= this.StoneRange(stone) && this.PlaceStone(hero, stone, behind)) {
+			if (distance + GRIP_STONE_BEHIND <= this.StoneRange(hero, stone) && this.PlaceStone(hero, stone, behind)) {
 				return
 			}
 		}
@@ -242,23 +241,16 @@ export class ComboManager {
 
 	private AbilityRange(ability: Ability): number {
 		if (ability instanceof earth_spirit_rolling_boulder) {
-			return this.RollDistance(ability)
+			return ROLL_REACH
+		}
+		if (ability instanceof earth_spirit_boulder_smash) {
+			return SMASH_REACH
 		}
 		const range = ability.CastRange
 		if (range > 0) {
 			return range
 		}
 		return ability.GetSpecialValue("radius")
-	}
-
-	private RollDistance(rolling: earth_spirit_rolling_boulder): number {
-		for (const name of ROLL_DISTANCE_SPECIALS) {
-			const value = rolling.GetSpecialValue(name)
-			if (value > 0) {
-				return value + ROLL_HITBOX_RADIUS
-			}
-		}
-		return ROLL_BASE_DISTANCE + ROLL_HITBOX_RADIUS
 	}
 
 	private CastAuto(hero: npc_dota_hero_earth_spirit, ability: Ability, enemy: Hero): void {
@@ -272,9 +264,9 @@ export class ComboManager {
 		this.LockCast(ability)
 	}
 
-	private StoneRange(stone: Nullable<earth_spirit_stone_caller>): number {
+	private StoneRange(hero: npc_dota_hero_earth_spirit, stone: Nullable<earth_spirit_stone_caller>): number {
 		const range = stone?.CastRange ?? 0
-		return range > 0 ? range : STONE_RANGE_FALLBACK
+		return range > 0 ? range : hero.GetCastRangeBonus(STONE_BASE_RANGE)
 	}
 
 	private PlaceStone(
@@ -334,7 +326,7 @@ export class ComboManager {
 		const stone = hero.GetAbilityByClass(earth_spirit_stone_caller)
 		const lines = [
 			`dist ${enemy === undefined ? "-" : Math.round(hero.Distance2D(enemy))}`,
-			`stone ${stone?.CurrentCharges ?? 0} r${Math.round(this.StoneRange(stone))}`,
+			`stone ${stone?.CurrentCharges ?? 0} r${Math.round(this.StoneRange(hero, stone))}`,
 			this.DebugAbility(hero, "grip", hero.GetAbilityByClass(earth_spirit_geomagnetic_grip)),
 			this.DebugAbility(hero, "roll", hero.GetAbilityByClass(earth_spirit_rolling_boulder)),
 			this.DebugAbility(hero, "smash", hero.GetAbilityByClass(earth_spirit_boulder_smash)),

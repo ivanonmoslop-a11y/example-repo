@@ -7,9 +7,11 @@ export const PUDGE_ABILITIES = ["pudge_meat_hook", "pudge_rot", "pudge_flesh_hea
 export class PudgeMenu {
 	public readonly State: Menu.Toggle
 	public readonly ComboKey: Menu.KeyBind
+	public readonly AutoHookKey: Menu.KeyBind
 	public readonly Abilities: Menu.ImageSelector
 	public readonly AutoRot: Menu.Toggle
 	public readonly ComboAfterHook: Menu.Toggle
+	public readonly CancelHook: Menu.Toggle
 
 	constructor(parent: Menu.Node) {
 		const tree = parent.AddNode("Pudge", ImageData.GetHeroTexture("npc_dota_hero_pudge", true))
@@ -18,6 +20,11 @@ export class PudgeMenu {
 			"Клавиша комбо",
 			"None",
 			"Пока зажата — комбо по врагу у курсора.\nЕсли цель летит в хуке — мгновенное\nРасчленение на подлёте"
+		)
+		this.AutoHookKey = tree.AddKeybind(
+			"Авто-Хук",
+			"None",
+			"Пока зажата — хук кидается сам в тот же тик,\nкогда расчёт перехвата даёт высокий шанс:\nцель стоит, оглушена, кастует, или её\nсносит рывком/отбрасыванием"
 		)
 		this.Abilities = SquareIcons(
 			tree.AddImageSelector(
@@ -37,6 +44,11 @@ export class PudgeMenu {
 			"Авто-комбо после хука",
 			true,
 			"Успешный хук сам запускает комбо.\nЛюбой свой приказ (движение, отмена\nРасчленения) обрывает его"
+		)
+		this.CancelHook = tree.AddToggle(
+			"Отмена хука при промахе",
+			true,
+			"Если цель сорвалась с траектории, пока идёт\nанимация каста — хук отменяется командой Стоп"
 		)
 	}
 }

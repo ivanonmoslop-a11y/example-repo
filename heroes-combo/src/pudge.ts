@@ -21,6 +21,7 @@ import {
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
+import { HookPredictor, IHookSolution } from "./hook-predict"
 import { PudgeMenu } from "./pudge-menu"
 
 const PUDGE_NAME = "npc_dota_hero_pudge"
@@ -35,12 +36,16 @@ const DISMEMBER_MODIFIER = "modifier_pudge_dismember"
 const LINKEN_MODIFIER = "modifier_item_sphere_target"
 
 const HOOK_SPEED_FALLBACK = 1600
-const HOOK_RANGE_FALLBACK = 1000
 const ROT_RADIUS_FALLBACK = 250
 const DISMEMBER_RANGE_FALLBACK = 175
 const HEAP_RANGE = 500
 
-const PREDICTION_PASSES = 3
+const AUTO_HOOK_CHANCE = 0.8
+const COMBO_HOOK_CHANCE = 0.3
+const CANCEL_CHANCE = 0.45
+const CANCEL_DEVIATION = 1.5
+const HOOK_WATCH_GRACE = 0.5
+
 const COMBO_HOLD_TIME = 3
 const HOOK_DRAG_MAX = 2
 const ROT_HYSTERESIS = 1.2
@@ -53,6 +58,7 @@ const TARGET_LINE_COLOR = new Color(255, 40, 40)
 
 export class PudgeCombo {
 	private readonly particles = new ParticlesSDK()
+	private readonly predictor = new HookPredictor()
 	private pendingAbility: Nullable<Ability>
 	private pendingTime = 0
 	private lastAttackTime = 0
@@ -62,6 +68,9 @@ export class PudgeCombo {
 	private rotOrderWant = false
 	private hookVictim: Nullable<Hero>
 	private hookVictimUntil = 0
+	private hookOrderPoint: Nullable<Vector3>
+	private hookOrderTarget: Nullable<Hero>
+	private hookOrderTime = 0
 
 	constructor(private readonly menu: PudgeMenu) {
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
@@ -99,6 +108,7 @@ export class PudgeCombo {
 		}
 		this.hookVictim = victim
 		this.hookVictimUntil = GameState.RawGameTime + HOOK_DRAG_MAX
+		this.hookOrderPoint = undefined
 		if (this.menu.ComboAfterHook.value) {
 			this.comboUntil = GameState.RawGameTime + COMBO_HOLD_TIME
 		}
@@ -121,23 +131,32 @@ export class PudgeCombo {
 			this.Reset()
 			return
 		}
+		this.predictor.Update(hero)
 		this.UpdateHookVictim()
 		if (this.menu.AutoRot.value) {
 			this.AutoRot(hero)
 		}
-		if (!this.ComboActive()) {
+		this.WatchHookCancel(hero)
+		const combo = this.ComboActive()
+		if (!combo && !this.menu.AutoHookKey.isPressed) {
 			this.ClearTarget()
 			return
 		}
-		if (hero.IsChanneling) {
+		if (hero.IsChanneling || hero.IsStunned || !this.CanAct()) {
+			return
+		}
+		if (this.AutoHook(hero)) {
+			return
+		}
+		if (!combo) {
+			this.ClearTarget()
 			return
 		}
 		const enemy = this.hookVictim ?? this.FindEnemy()
 		this.DrawTarget(hero, enemy)
-		if (hero.IsStunned || enemy === undefined || !this.CanAct()) {
-			return
+		if (enemy !== undefined) {
+			this.Execute(hero, enemy)
 		}
-		this.Execute(hero, enemy)
 	}
 
 	private ComboActive(): boolean {
@@ -163,6 +182,38 @@ export class PudgeCombo {
 		}
 	}
 
+	// Zero delay: the first tick a solution clears the bar, the hook goes out.
+	private AutoHook(hero: Hero): boolean {
+		if (!this.menu.AutoHookKey.isPressed || !this.Enabled(HOOK)) {
+			return false
+		}
+		const hook = hero.GetAbilityByClass(pudge_meat_hook)
+		if (!this.Ready(hook)) {
+			return false
+		}
+		let bestTarget: Nullable<Hero>
+		let bestSolution: Nullable<IHookSolution>
+		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
+			if (!this.IsValidTarget(enemy) || enemy.IsInvulnerable || enemy.IsUntargetable) {
+				continue
+			}
+			const solution = this.predictor.Solve(hero, hook!, enemy)
+			if (solution.blocked || solution.outOfRange || solution.chance < AUTO_HOOK_CHANCE) {
+				continue
+			}
+			if (bestSolution === undefined || solution.chance > bestSolution.chance) {
+				bestSolution = solution
+				bestTarget = enemy
+			}
+		}
+		if (bestSolution === undefined || bestTarget === undefined) {
+			return false
+		}
+		this.DrawTarget(hero, bestTarget)
+		this.CastHook(hero, hook!, bestTarget, bestSolution.point)
+		return true
+	}
+
 	private Execute(hero: Hero, enemy: Hero): void {
 		const hook = hero.GetAbilityByClass(pudge_meat_hook)
 		const rot = hero.GetAbilityByClass(pudge_rot)
@@ -171,10 +222,10 @@ export class PudgeCombo {
 		const distance = hero.Distance2D(enemy)
 		const dragged = enemy === this.hookVictim
 
-		if (dragged && this.InstantDismember(hero, dismember, enemy, distance)) {
+		if (dragged && this.InstantDismember(hero, dismember, enemy)) {
 			return
 		}
-		if (!dragged && this.Enabled(HOOK) && this.Ready(hook) && this.ThrowHook(hero, hook!, enemy)) {
+		if (!dragged && this.Enabled(HOOK) && this.Ready(hook) && this.ComboHook(hero, hook!, enemy)) {
 			return
 		}
 		if (this.Enabled(ROT) && rot !== undefined && this.SetRot(hero, rot, this.RotWanted(hero, rot, distance))) {
@@ -183,11 +234,7 @@ export class PudgeCombo {
 		if (this.Enabled(FLESH_HEAP) && this.CastHeap(hero, heap, distance)) {
 			return
 		}
-		if (
-			this.Enabled(DISMEMBER) &&
-			this.Castable(dismember, enemy) &&
-			distance <= this.AbilityRange(dismember!, DISMEMBER_RANGE_FALLBACK)
-		) {
+		if (this.Enabled(DISMEMBER) && this.Castable(dismember, enemy) && this.InCastRange(hero, dismember!, enemy)) {
 			hero.CastTarget(dismember!, enemy)
 			this.LockCast(dismember!)
 			return
@@ -198,12 +245,62 @@ export class PudgeCombo {
 		this.Attack(hero, enemy)
 	}
 
-	private InstantDismember(hero: Hero, dismember: Nullable<Ability>, victim: Hero, distance: number): boolean {
+	private ComboHook(hero: Hero, hook: pudge_meat_hook, enemy: Hero): boolean {
+		if (enemy.IsInvulnerable || enemy.IsUntargetable) {
+			return false
+		}
+		const solution = this.predictor.Solve(hero, hook, enemy)
+		if (solution.blocked || solution.outOfRange || solution.chance < COMBO_HOOK_CHANCE) {
+			return false
+		}
+		this.CastHook(hero, hook, enemy, solution.point)
+		return true
+	}
+
+	private CastHook(hero: Hero, hook: pudge_meat_hook, target: Hero, point: Vector3): void {
+		hero.CastPosition(hook, point)
+		this.LockCast(hook)
+		this.hookOrderPoint = point
+		this.hookOrderTarget = target
+		this.hookOrderTime = GameState.RawGameTime
+	}
+
+	// The ordered point is only a promise: while the cast animation plays the target can
+	// still break off, and a hook that is already going to miss is worth more cancelled.
+	private WatchHookCancel(hero: Hero): void {
+		const ordered = this.hookOrderPoint
+		if (ordered === undefined) {
+			return
+		}
+		const hook = hero.GetAbilityByClass(pudge_meat_hook)
+		if (hook === undefined) {
+			this.hookOrderPoint = undefined
+			return
+		}
+		if (!hook.IsInAbilityPhase) {
+			if (GameState.RawGameTime - this.hookOrderTime > HOOK_WATCH_GRACE) {
+				this.hookOrderPoint = undefined
+			}
+			return
+		}
+		const target = this.hookOrderTarget
+		if (!this.menu.CancelHook.value || target === undefined || !this.IsValidTarget(target)) {
+			return
+		}
+		const solution = this.predictor.Solve(hero, hook, target)
+		const drift = solution.point.Distance2D(ordered)
+		if (solution.chance >= CANCEL_CHANCE && drift <= this.predictor.Width(hook) * CANCEL_DEVIATION) {
+			return
+		}
+		hero.OrderStop()
+		this.hookOrderPoint = undefined
+	}
+
+	private InstantDismember(hero: Hero, dismember: Nullable<Ability>, victim: Hero): boolean {
 		if (!this.Enabled(DISMEMBER) || !this.Castable(dismember, victim)) {
 			return false
 		}
-		const range = this.AbilityRange(dismember!, DISMEMBER_RANGE_FALLBACK)
-		if (distance > range + this.DragLead(hero, dismember!)) {
+		if (!this.InCastRange(hero, dismember!, victim, this.DragLead(hero, dismember!))) {
 			return false
 		}
 		hero.CastTarget(dismember!, victim)
@@ -218,30 +315,11 @@ export class PudgeCombo {
 		return speed * dismember.CastDelay
 	}
 
-	private ThrowHook(hero: Hero, hook: pudge_meat_hook, enemy: Hero): boolean {
-		if (enemy.IsInvulnerable || enemy.IsUntargetable) {
-			return false
-		}
-		const range = this.AbilityRange(hook, HOOK_RANGE_FALLBACK)
-		if (hero.Distance2D(enemy) > range) {
-			return false
-		}
-		const point = this.HookPoint(hero, hook, enemy)
-		if (hero.Distance2D(point) > range) {
-			return false
-		}
-		hero.CastPosition(hook, point)
-		this.LockCast(hook)
-		return true
-	}
-
-	private HookPoint(hero: Hero, hook: pudge_meat_hook, target: Hero): Vector3 {
-		const speed = hook.GetBaseSpeedForLevel(hook.Level) || HOOK_SPEED_FALLBACK
-		let point = target.Position
-		for (let i = 0; i < PREDICTION_PASSES; i++) {
-			point = target.GetPredictionPosition(hook.CastDelay + hero.Distance2D(point) / speed, true)
-		}
-		return point
+	// Dota measures a unit-target cast edge to edge, so a centre-to-centre compare is
+	// stricter than the game and left Dismember refusing at ranges it would accept.
+	private InCastRange(hero: Hero, ability: Ability, target: Hero, bonus = 0): boolean {
+		const range = ability.CastRange > 0 ? ability.CastRange : DISMEMBER_RANGE_FALLBACK
+		return hero.IsInRange(target, range + bonus)
 	}
 
 	private CastHeap(hero: Hero, heap: Nullable<Ability>, distance: number): boolean {
@@ -320,7 +398,7 @@ export class PudgeCombo {
 		if (now - this.lastAttackTime < ATTACK_GAP) {
 			return
 		}
-		if (hero.IsAttacking && hero.Distance2D(enemy) <= hero.GetAttackRange(enemy)) {
+		if (hero.IsAttacking && hero.IsInRange(enemy, hero.GetAttackRange(enemy))) {
 			return
 		}
 		this.lastAttackTime = now
@@ -338,10 +416,6 @@ export class PudgeCombo {
 			return true
 		}
 		return !ability!.TargetTeamMask.hasMask(DOTA_UNIT_TARGET_TEAM.DOTA_UNIT_TARGET_TEAM_ENEMY)
-	}
-
-	private AbilityRange(ability: Ability, fallback: number): number {
-		return ability.CastRange > 0 ? ability.CastRange : fallback
 	}
 
 	private FindEnemy(): Nullable<Hero> {
@@ -440,11 +514,16 @@ export class PudgeCombo {
 		this.rotOrderWant = false
 		this.hookVictim = undefined
 		this.hookVictimUntil = 0
+		this.hookOrderPoint = undefined
+		this.hookOrderTarget = undefined
+		this.hookOrderTime = 0
+		this.predictor.Reset()
 		this.ClearTarget()
 	}
 
 	private GameEnded(): void {
 		this.menu.ComboKey.isPressed = false
+		this.menu.AutoHookKey.isPressed = false
 		this.Reset()
 	}
 }

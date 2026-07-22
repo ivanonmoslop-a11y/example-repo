@@ -11,7 +11,6 @@ export class PudgeMenu {
 	public readonly Abilities: Menu.ImageSelector
 	public readonly AutoRot: Menu.Toggle
 	public readonly ComboAfterHook: Menu.Toggle
-	public readonly CancelHook: Menu.Toggle
 
 	constructor(parent: Menu.Node) {
 		const tree = parent.AddNode("Pudge", ImageData.GetHeroTexture("npc_dota_hero_pudge", true))
@@ -38,17 +37,12 @@ export class PudgeMenu {
 		this.AutoRot = tree.AddToggle(
 			"Авто-Rot",
 			true,
-			"Включает Гниль сразу после попадания хука\nи на время Расчленения.\nВыключает, когда рядом никого не осталось"
+			"Включает Гниль после попадания хука\nи на время Расчленения, потом сама гасит.\nГниль, включённую руками, не трогает"
 		)
 		this.ComboAfterHook = tree.AddToggle(
 			"Авто-комбо после хука",
 			true,
 			"Успешный хук сам запускает комбо.\nЛюбой свой приказ (движение, отмена\nРасчленения) обрывает его"
-		)
-		this.CancelHook = tree.AddToggle(
-			"Отмена хука при промахе",
-			true,
-			"Если цель сорвалась с траектории, пока идёт\nанимация каста — хук отменяется командой Стоп"
 		)
 	}
 }

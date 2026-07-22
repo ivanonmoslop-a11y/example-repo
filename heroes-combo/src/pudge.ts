@@ -21,7 +21,7 @@ import {
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
-import { HookPredictor, IHookSolution } from "./hook-predict"
+import { HookPredictor } from "./hook-predict"
 import { PudgeMenu } from "./pudge-menu"
 
 const PUDGE_NAME = "npc_dota_hero_pudge"
@@ -36,6 +36,7 @@ const DISMEMBER_MODIFIER = "modifier_pudge_dismember"
 const LINKEN_MODIFIER = "modifier_item_sphere_target"
 
 const HOOK_SPEED_FALLBACK = 1600
+const HOOK_RANGE_FALLBACK = 1000
 const ROT_RADIUS_FALLBACK = 250
 const DISMEMBER_RANGE_FALLBACK = 175
 const HEAP_RANGE = 500
@@ -48,7 +49,6 @@ const HOOK_WATCH_GRACE = 0.5
 
 const COMBO_HOLD_TIME = 3
 const HOOK_DRAG_MAX = 2
-const ROT_HYSTERESIS = 1.2
 const ROT_ORDER_GUARD = 0.3
 const ORDER_GUARD = 0.03
 const ATTACK_GAP = 0.1
@@ -65,7 +65,6 @@ export class PudgeCombo {
 	private comboUntil = 0
 	private comboHeld = false
 	private rotOrderTime = 0
-	private rotOrderWant = false
 	private hookVictim: Nullable<Hero>
 	private hookVictimUntil = 0
 	private hookOrderPoint: Nullable<Vector3>
@@ -138,24 +137,21 @@ export class PudgeCombo {
 		}
 		this.WatchHookCancel(hero)
 		const combo = this.ComboActive()
-		if (!combo && !this.menu.AutoHookKey.isPressed) {
+		const aiming = this.menu.AutoHookKey.isPressed
+		if (!combo && !aiming) {
 			this.ClearTarget()
 			return
 		}
-		if (hero.IsChanneling || hero.IsStunned || !this.CanAct()) {
-			return
-		}
-		if (this.AutoHook(hero)) {
-			return
-		}
-		if (!combo) {
-			this.ClearTarget()
-			return
-		}
-		const enemy = this.hookVictim ?? this.FindEnemy()
+		const enemy = aiming ? this.AimTarget(hero) : this.hookVictim ?? this.FindEnemy()
 		this.DrawTarget(hero, enemy)
-		if (enemy !== undefined) {
-			this.Execute(hero, enemy)
+		if (hero.IsChanneling || hero.IsStunned || !this.CanAct() || enemy === undefined) {
+			return
+		}
+		if (aiming && this.AutoHook(hero, enemy)) {
+			return
+		}
+		if (combo) {
+			this.Execute(hero, aiming ? this.hookVictim ?? this.FindEnemy() ?? enemy : enemy)
 		}
 	}
 
@@ -182,35 +178,32 @@ export class PudgeCombo {
 		}
 	}
 
+	// One deterministic aim target so the drawn line always names who Pudge is about to
+	// hook: the enemy nearest the cursor, preferring one that is actually in hook range.
+	private AimTarget(hero: Hero): Nullable<Hero> {
+		const hook = hero.GetAbilityByClass(pudge_meat_hook)
+		const range = hook === undefined ? HOOK_RANGE_FALLBACK : this.HookRange(hook)
+		return this.FindEnemy(hero, range) ?? this.FindEnemy()
+	}
+
+	private HookRange(hook: pudge_meat_hook): number {
+		return hook.CastRange > 0 ? hook.CastRange : HOOK_RANGE_FALLBACK
+	}
+
 	// Zero delay: the first tick a solution clears the bar, the hook goes out.
-	private AutoHook(hero: Hero): boolean {
-		if (!this.menu.AutoHookKey.isPressed || !this.Enabled(HOOK)) {
+	private AutoHook(hero: Hero, target: Hero): boolean {
+		if (!this.Enabled(HOOK) || target.IsInvulnerable || target.IsUntargetable) {
 			return false
 		}
 		const hook = hero.GetAbilityByClass(pudge_meat_hook)
 		if (!this.Ready(hook)) {
 			return false
 		}
-		let bestTarget: Nullable<Hero>
-		let bestSolution: Nullable<IHookSolution>
-		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
-			if (!this.IsValidTarget(enemy) || enemy.IsInvulnerable || enemy.IsUntargetable) {
-				continue
-			}
-			const solution = this.predictor.Solve(hero, hook!, enemy)
-			if (solution.blocked || solution.outOfRange || solution.chance < AUTO_HOOK_CHANCE) {
-				continue
-			}
-			if (bestSolution === undefined || solution.chance > bestSolution.chance) {
-				bestSolution = solution
-				bestTarget = enemy
-			}
-		}
-		if (bestSolution === undefined || bestTarget === undefined) {
+		const solution = this.predictor.Solve(hero, hook!, target)
+		if (solution.blocked || solution.outOfRange || solution.chance < AUTO_HOOK_CHANCE) {
 			return false
 		}
-		this.DrawTarget(hero, bestTarget)
-		this.CastHook(hero, hook!, bestTarget, bestSolution.point)
+		this.CastHook(hero, hook!, target, solution.point)
 		return true
 	}
 
@@ -228,7 +221,7 @@ export class PudgeCombo {
 		if (!dragged && this.Enabled(HOOK) && this.Ready(hook) && this.ComboHook(hero, hook!, enemy)) {
 			return
 		}
-		if (this.Enabled(ROT) && rot !== undefined && this.SetRot(hero, rot, this.RotWanted(hero, rot, distance))) {
+		if (this.Enabled(ROT) && rot !== undefined && this.RotInRadius(rot, distance) && this.EnableRot(hero, rot)) {
 			return
 		}
 		if (this.Enabled(FLESH_HEAP) && this.CastHeap(hero, heap, distance)) {
@@ -284,7 +277,7 @@ export class PudgeCombo {
 			return
 		}
 		const target = this.hookOrderTarget
-		if (!this.menu.CancelHook.value || target === undefined || !this.IsValidTarget(target)) {
+		if (target === undefined || !this.IsValidTarget(target)) {
 			return
 		}
 		const solution = this.predictor.Solve(hero, hook, target)
@@ -345,21 +338,17 @@ export class PudgeCombo {
 		return true
 	}
 
+	// Only ever switches Rot ON. Turning it off is the player's call — an automatic
+	// switch-off fights every manual Rot the moment nobody is standing next to Pudge.
 	private AutoRot(hero: Hero): void {
 		const rot = hero.GetAbilityByClass(pudge_rot)
 		if (rot === undefined || rot.Level === 0) {
 			return
 		}
-		if (this.hookVictim !== undefined || this.Dismembering(hero)) {
-			this.SetRot(hero, rot, true)
+		if (this.hookVictim === undefined && !this.Dismembering(hero)) {
 			return
 		}
-		if (!hero.HasBuffByName(ROT_MODIFIER)) {
-			return
-		}
-		const nearest = this.NearestEnemy(hero)
-		const distance = nearest === undefined ? Number.MAX_VALUE : hero.Distance2D(nearest)
-		this.SetRot(hero, rot, this.RotWanted(hero, rot, distance))
+		this.EnableRot(hero, rot)
 	}
 
 	private Dismembering(hero: Hero): boolean {
@@ -372,21 +361,18 @@ export class PudgeCombo {
 		})
 	}
 
-	private RotWanted(hero: Hero, rot: Ability, distance: number): boolean {
-		const radius = rot.GetBaseAOERadiusForLevel(rot.Level) || ROT_RADIUS_FALLBACK
-		const on = hero.HasBuffByName(ROT_MODIFIER)
-		return distance <= (on ? radius * ROT_HYSTERESIS : radius)
+	private RotInRadius(rot: Ability, distance: number): boolean {
+		return distance <= (rot.GetBaseAOERadiusForLevel(rot.Level) || ROT_RADIUS_FALLBACK)
 	}
 
-	private SetRot(hero: Hero, rot: Ability, want: boolean): boolean {
-		if (rot.Level === 0 || hero.IsStunned || want === hero.HasBuffByName(ROT_MODIFIER)) {
+	private EnableRot(hero: Hero, rot: Ability): boolean {
+		if (rot.Level === 0 || hero.IsStunned || hero.HasBuffByName(ROT_MODIFIER)) {
 			return false
 		}
 		const now = GameState.RawGameTime
-		if (this.rotOrderWant === want && now - this.rotOrderTime < ROT_ORDER_GUARD) {
+		if (now - this.rotOrderTime < ROT_ORDER_GUARD) {
 			return false
 		}
-		this.rotOrderWant = want
 		this.rotOrderTime = now
 		hero.CastToggle(rot)
 		this.LockCast(rot)
@@ -418,7 +404,7 @@ export class PudgeCombo {
 		return !ability!.TargetTeamMask.hasMask(DOTA_UNIT_TARGET_TEAM.DOTA_UNIT_TARGET_TEAM_ENEMY)
 	}
 
-	private FindEnemy(): Nullable<Hero> {
+	private FindEnemy(hero?: Hero, range = Number.MAX_VALUE): Nullable<Hero> {
 		const cursor = InputManager.CursorOnWorld
 		let target: Nullable<Hero>
 		let closest = Number.MAX_VALUE
@@ -426,24 +412,10 @@ export class PudgeCombo {
 			if (!this.IsValidTarget(enemy)) {
 				continue
 			}
+			if (hero !== undefined && hero.Distance2D(enemy) > range) {
+				continue
+			}
 			const distance = enemy.Distance2D(cursor)
-			if (distance >= closest) {
-				continue
-			}
-			closest = distance
-			target = enemy
-		}
-		return target
-	}
-
-	private NearestEnemy(hero: Hero): Nullable<Hero> {
-		let target: Nullable<Hero>
-		let closest = Number.MAX_VALUE
-		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
-			if (!this.IsValidTarget(enemy)) {
-				continue
-			}
-			const distance = hero.Distance2D(enemy)
 			if (distance >= closest) {
 				continue
 			}
@@ -511,7 +483,6 @@ export class PudgeCombo {
 		this.comboUntil = 0
 		this.comboHeld = false
 		this.rotOrderTime = 0
-		this.rotOrderWant = false
 		this.hookVictim = undefined
 		this.hookVictimUntil = 0
 		this.hookOrderPoint = undefined

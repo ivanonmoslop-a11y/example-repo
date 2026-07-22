@@ -24,11 +24,11 @@ const SOLVE_PASSES = 4
 
 const CHANCE_STATIC = 1
 const CHANCE_FORCED = 0.95
-const CHANCE_MOVING = 0.9
-const CHANCE_ERRATIC = 0.45
-const TURN_UNCERTAINTY = 220
-const ACCEL_UNCERTAINTY = 0.5
-const REACTION_UNCERTAINTY = 0.18
+const CHANCE_MOVING = 0.95
+const CHANCE_ERRATIC = 0.5
+const TURN_UNCERTAINTY = 180
+const ACCEL_UNCERTAINTY = 0.35
+const REACTION_UNCERTAINTY = 0.12
 
 export const enum HookMotion {
 	Static,
@@ -156,14 +156,18 @@ export class HookPredictor {
 		return this.ZigZag(target) >= ZIGZAG_ERRATIC ? HookMotion.Erratic : HookMotion.Straight
 	}
 
+	// Falls back to heading * MoveSpeed: a target seen for only a tick or two has no
+	// usable sample delta yet, and returning a zero vector there would silently degrade
+	// every solve into "hook where he stands".
 	private Velocity(target: Hero, motion: HookMotion): Vector3 {
 		if (motion === HookMotion.Static) {
 			return new Vector3()
 		}
-		if (motion === HookMotion.Erratic) {
-			return this.AverageVelocity(target)
+		const measured = motion === HookMotion.Erratic ? this.AverageVelocity(target) : this.InstantVelocity(target)
+		if (measured.Length2D >= MIN_SPEED) {
+			return measured
 		}
-		return this.InstantVelocity(target)
+		return target.IsMoving ? target.Forward.MultiplyScalar(target.MoveSpeed) : new Vector3()
 	}
 
 	private InstantVelocity(target: Hero): Vector3 {
@@ -326,7 +330,11 @@ export class HookPredictor {
 		}
 		const turnError = Math.abs(turnRate) * total * TURN_UNCERTAINTY
 		const accelError = this.AccelerationError(target, total) * ACCEL_UNCERTAINTY
-		const reactError = target.MoveSpeed * total * REACTION_UNCERTAINTY
+		// Only a target that has actually been changing direction is charged for the
+		// direction change it might still make. A hero holding one course for the whole
+		// sample window is as predictable as a standing one.
+		const steadiness = Math.min(this.ZigZag(target) / ZIGZAG_ERRATIC, 1)
+		const reactError = target.MoveSpeed * total * REACTION_UNCERTAINTY * steadiness
 		const sigma = turnError + accelError + reactError
 		return base * (width / (width + sigma))
 	}

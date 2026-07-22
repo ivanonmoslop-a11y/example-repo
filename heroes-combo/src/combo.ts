@@ -89,13 +89,13 @@ export class ComboManager {
 		const petrify = hero.GetAbilityByName(PETRIFY_ABILITY)
 
 		const distance = hero.Distance2D(enemy)
-		if (distance > this.EngageRange(hero, stone, grip, rolling, smash, magnetize, petrify)) {
+		if (distance > this.EngageRange(hero, grip, rolling, smash, magnetize, petrify)) {
 			this.Attack(hero, enemy)
 			return
 		}
 
 		if (this.Enabled("earth_spirit_geomagnetic_grip") && this.Ready(grip) && this.InRange(hero, grip!, enemy)) {
-			const behind = hero.Position.Extend(enemy.Position, hero.Distance2D(enemy) + GRIP_STONE_BEHIND)
+			const behind = hero.Position.Extend(enemy.Position, distance + GRIP_STONE_BEHIND)
 			const stonePosition = this.StonePosition(hero, stone, behind)
 			if (this.HasStoneNear(stonePosition, STONE_NEAR_RADIUS)) {
 				this.Cast(hero, grip!, enemy.Position)
@@ -259,14 +259,8 @@ export class ComboManager {
 		return duration > 0 ? speed * duration : speed
 	}
 
-	private GripRange(grip: earth_spirit_geomagnetic_grip, stone: Nullable<earth_spirit_stone_caller>): number {
-		const stoneRange = (stone?.CastRange ?? 0) - GRIP_STONE_BEHIND
-		return Math.min(this.AbilityRange(grip), Math.max(stoneRange, 0))
-	}
-
 	private EngageRange(
 		hero: npc_dota_hero_earth_spirit,
-		stone: Nullable<earth_spirit_stone_caller>,
 		grip: Nullable<earth_spirit_geomagnetic_grip>,
 		rolling: Nullable<earth_spirit_rolling_boulder>,
 		smash: Nullable<earth_spirit_boulder_smash>,
@@ -274,22 +268,24 @@ export class ComboManager {
 		petrify: Nullable<Ability>
 	): number {
 		let range = Number.MAX_VALUE
-		if (this.Usable(grip, "earth_spirit_geomagnetic_grip")) {
-			range = Math.min(range, this.GripRange(grip!, stone))
+		const consider = (ability: Nullable<Ability>, name: string) => {
+			if (!this.Usable(ability, name)) {
+				return
+			}
+			const value = this.AbilityRange(ability!)
+			if (value > 0) {
+				range = Math.min(range, value)
+			}
 		}
-		if (this.Usable(rolling, "earth_spirit_rolling_boulder")) {
-			range = Math.min(range, this.AbilityRange(rolling!))
+		consider(grip, "earth_spirit_geomagnetic_grip")
+		consider(rolling, "earth_spirit_rolling_boulder")
+		consider(smash, "earth_spirit_boulder_smash")
+		consider(magnetize, "earth_spirit_magnetize")
+		consider(petrify, PETRIFY_ABILITY)
+		if (range === Number.MAX_VALUE) {
+			return range
 		}
-		if (this.Usable(smash, "earth_spirit_boulder_smash")) {
-			range = Math.min(range, this.AbilityRange(smash!))
-		}
-		if (this.Usable(magnetize, "earth_spirit_magnetize")) {
-			range = Math.min(range, this.AbilityRange(magnetize!))
-		}
-		if (this.Usable(petrify, PETRIFY_ABILITY)) {
-			range = Math.min(range, this.AbilityRange(petrify!))
-		}
-		return range === Number.MAX_VALUE ? hero.GetAttackRange() : range
+		return Math.max(range, hero.GetAttackRange())
 	}
 
 	private Usable(ability: Nullable<Ability>, name: string): boolean {

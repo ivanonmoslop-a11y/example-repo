@@ -3,6 +3,7 @@ import { EarthSpiritCombo } from "./earth-spirit"
 import { FountainKick } from "./fountain"
 import { KickCombo } from "./kick"
 import { MenuManager } from "./menu"
+import { PudgeCombo } from "./pudge"
 
 new (class HeroesCombo {
 	private readonly menu = new MenuManager()
@@ -10,6 +11,7 @@ new (class HeroesCombo {
 	private readonly kick = new KickCombo(this.menu.EarthSpirit)
 	private readonly combo = new ComboManager(this.menu.EarthSpirit)
 	private readonly fountain = new FountainKick(this.menu.EarthSpirit)
+	private readonly pudge = new PudgeCombo(this.menu.Pudge)
 
 	public get EarthSpirit(): EarthSpiritCombo {
 		return this.earthSpirit
@@ -25,5 +27,9 @@ new (class HeroesCombo {
 
 	public get Fountain(): FountainKick {
 		return this.fountain
+	}
+
+	public get Pudge(): PudgeCombo {
+		return this.pudge
 	}
 })()

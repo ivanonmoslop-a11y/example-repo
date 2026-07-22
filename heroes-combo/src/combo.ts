@@ -50,6 +50,12 @@ const MAGNETIZE_REFRESH_TIME = 0.8
 const MAGNETIZE_REFRESH_LOCK = 1
 const STONE_PENDING_TIME = 0.5
 const ITEM_SELF_RANGE = 700
+const ITEM_ENGAGE_RANGE = 600
+const ITEM_CHASE_RANGE = 400
+const SOUL_RING_MIN_HP = 25
+const SATANIC_MAX_HP = 20
+const SHIVA_RADIUS = 900
+const ETHEREAL_MODIFIER = "modifier_item_ethereal_blade_slow"
 const TARGET_LINE_KEY = "heroes_combo_target_line"
 const TARGET_LINE_COLOR = new Color(255, 40, 40)
 
@@ -114,7 +120,8 @@ export class ComboManager {
 			return
 		}
 
-		if (this.UseItems(hero, enemy, distance)) {
+		const spellsSpent = !this.Ready(grip) && !this.Ready(rolling) && !this.Ready(smash) && !this.Ready(magnetize)
+		if (this.UseItems(hero, enemy, distance, spellsSpent)) {
 			return
 		}
 
@@ -186,7 +193,7 @@ export class ComboManager {
 		this.Attack(hero, enemy)
 	}
 
-	private UseItems(hero: npc_dota_hero_earth_spirit, enemy: Hero, distance: number): boolean {
+	private UseItems(hero: npc_dota_hero_earth_spirit, enemy: Hero, distance: number, spellsSpent: boolean): boolean {
 		for (const name of COMBO_ITEMS) {
 			if (!this.menu.ComboItems.IsEnabled(name)) {
 				continue
@@ -198,10 +205,67 @@ export class ComboManager {
 			if (distance > this.ItemRange(item)) {
 				continue
 			}
+			if (!this.ItemAllowed(name, item, hero, enemy, distance, spellsSpent)) {
+				continue
+			}
 			this.CastAuto(hero, item, enemy)
 			return true
 		}
 		return false
+	}
+
+	private ItemAllowed(
+		name: string,
+		item: Item,
+		hero: npc_dota_hero_earth_spirit,
+		enemy: Hero,
+		distance: number,
+		spellsSpent: boolean
+	): boolean {
+		switch (name) {
+			case "item_soul_ring":
+				return hero.HPPercent > SOUL_RING_MIN_HP
+			case "item_armlet":
+				return !item.IsToggled
+			case "item_ancient_janggo":
+			case "item_boots_of_bearing":
+				return distance > ITEM_CHASE_RANGE
+			case "item_blink":
+				return distance > ITEM_CHASE_RANGE
+			case "item_harpoon":
+				return distance > hero.GetAttackRange(enemy)
+			case "item_shivas_guard":
+				return distance <= this.ShivaRadius(item)
+			case "item_dagon_5":
+				return !this.EtherealPending(hero, enemy)
+			case "item_black_king_bar":
+			case "item_blade_mail":
+			case "item_pipe":
+			case "item_lotus_orb":
+				return distance <= ITEM_ENGAGE_RANGE
+			case "item_heavens_halberd":
+				return spellsSpent
+			case "item_satanic":
+				return hero.HPPercent <= SATANIC_MAX_HP
+			case "item_mask_of_madness":
+			case "item_refresher":
+				return spellsSpent
+			default:
+				return true
+		}
+	}
+
+	private EtherealPending(hero: npc_dota_hero_earth_spirit, enemy: Hero): boolean {
+		if (enemy.HasBuffByName(ETHEREAL_MODIFIER)) {
+			return false
+		}
+		const ethereal = this.FindItem(hero, "item_ethereal_blade")
+		return ethereal !== undefined && this.menu.ComboItems.IsEnabled("item_ethereal_blade") && ethereal.CanBeCasted()
+	}
+
+	private ShivaRadius(item: Item): number {
+		const radius = item.GetSpecialValue("blast_radius")
+		return radius > 0 ? radius : SHIVA_RADIUS
 	}
 
 	private FindItem(hero: npc_dota_hero_earth_spirit, name: string): Nullable<Item> {

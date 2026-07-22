@@ -86,6 +86,8 @@ export class EarthSpiritMenu {
 	public readonly ExtendMagnetize: Menu.Toggle
 	public readonly KickToAlly: Menu.KeyBind
 	public readonly KickToTower: Menu.KeyBind
+	public readonly KickToFountain: Menu.KeyBind
+	public readonly FountainBlink: Menu.Toggle
 
 	constructor(parent: Menu.Node) {
 		const tree = parent.AddNode("Earth Spirit", ImageData.GetHeroTexture("npc_dota_hero_earth_spirit", true))
@@ -165,6 +167,18 @@ export class EarthSpiritMenu {
 			"Пнуть к вышке",
 			"None",
 			"Пока зажата: пинает ближайшего врага\nпод свою ближайшую вышку.\nЕсли есть блинк — прыгает на позицию\nза врагом, иначе подходит пешком"
+		)
+
+		const fountain = tree.AddNode("Пнуть на фонтан", ImageData.GetSpellTexture("earth_spirit_petrify"))
+		this.KickToFountain = fountain.AddKeybind(
+			"Fountain Kick",
+			"None",
+			"Пока зажата: петрифай на врага и пинок\nв сторону своего фонтана.\nЦель берётся только та, что долетит"
+		)
+		this.FountainBlink = fountain.AddToggle(
+			"Использовать блинк",
+			true,
+			"Прыгать блинком к цели, если до неё\nне хватает дальности пинка"
 		)
 	}
 }

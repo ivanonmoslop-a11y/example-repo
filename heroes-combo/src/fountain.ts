@@ -105,31 +105,38 @@ export class FountainKick {
 
 	private PostDataUpdate(): void {
 		const hero = this.Hero
-		const pressed = this.menu.State.value && this.menu.KickToFountain.isPressed
-		if (!pressed || !this.InGame || hero === undefined) {
+		if (!this.menu.State.value || !this.InGame || hero === undefined) {
 			this.wasPressed = false
-			this.particles.DestroyByKey(ARROW_KEY)
-			this.particles.DestroyByKey(LOCK_KEY)
+			this.ClearPath()
+			return
+		}
+		const fountain = this.FindFountain()
+		const enemy = fountain === undefined ? undefined : this.FindTarget(hero, fountain)
+		if (fountain === undefined || enemy === undefined) {
+			this.ClearPath()
+		} else {
+			this.DrawPath(hero, enemy, fountain)
+		}
+		if (!this.menu.KickToFountain.isPressed) {
+			this.wasPressed = false
 			return
 		}
 		if (!this.wasPressed) {
 			this.wasPressed = true
 			hero.OrderStop()
 		}
-		if (hero.IsStunned) {
+		if (hero.IsStunned || fountain === undefined || enemy === undefined) {
 			return
 		}
-		const fountain = this.FindFountain()
-		const enemy = fountain === undefined ? undefined : this.FindTarget(hero, fountain)
-		if (fountain === undefined || enemy === undefined) {
-			this.particles.DestroyByKey(ARROW_KEY)
-			return
-		}
-		this.DrawPath(hero, enemy, fountain)
 		if (GameState.RawGameTime - this.lastOrderTime < ORDER_GAP) {
 			return
 		}
 		this.Execute(hero, enemy, fountain)
+	}
+
+	private ClearPath(): void {
+		this.particles.DestroyByKey(ARROW_KEY)
+		this.particles.DestroyByKey(LOCK_KEY)
 	}
 
 	private Execute(hero: npc_dota_hero_earth_spirit, enemy: Hero, fountain: Fountain): void {
@@ -406,7 +413,6 @@ export class FountainKick {
 		if (fountain === undefined) {
 			return
 		}
-		const held = this.menu.KickToFountain.isPressed
 		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
 			if (!this.IsValidTarget(enemy)) {
 				continue
@@ -414,12 +420,12 @@ export class FountainKick {
 			if (this.NeededFlight(enemy, fountain) > KICK_FLIGHT_PETRIFIED) {
 				continue
 			}
-			if (!held && hero.Distance2D(enemy) > LOCK_RADIUS) {
+			if (hero.Distance2D(enemy) > LOCK_RADIUS) {
 				continue
 			}
 			const state = this.State(hero, enemy, fountain)
 			const color = this.StateColor(state)
-			if (held && state !== KickState.NoAghs) {
+			if (state !== KickState.NoAghs) {
 				this.DrawCage(enemy, color)
 			}
 			this.DrawCard(hero, enemy, fountain, state, color)

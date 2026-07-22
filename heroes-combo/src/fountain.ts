@@ -44,7 +44,10 @@ const LINKEN_BREAKERS = [
 	"item_sheepstick"
 ]
 
-const KICK_FLIGHT = 2000
+const KICK_FLIGHT_PETRIFIED = 2000
+const KICK_FLIGHT_HERO = 1000
+const PETRIFIED_FLIGHT_SPECIALS = ["rock_distance", "remnant_distance"]
+const HERO_FLIGHT_SPECIALS = ["distance", "unit_distance", "push_length"]
 const FOUNTAIN_RADIUS = 300
 const LOCK_RADIUS = 1500
 const PICKUP_RADIUS = 150
@@ -67,6 +70,7 @@ const enum KickState {
 	Ready,
 	Approach,
 	NoMana,
+	NoAghs,
 	Denied
 }
 
@@ -233,7 +237,7 @@ export class FountainKick {
 			if (!this.IsValidTarget(enemy) || hero.Distance2D(enemy) > LOCK_RADIUS) {
 				continue
 			}
-			if (!this.CanReachFountain(enemy, fountain)) {
+			if (!this.CanReachFountain(hero, enemy, fountain)) {
 				continue
 			}
 			const distance = enemy.Distance2D(cursor)
@@ -246,8 +250,41 @@ export class FountainKick {
 		return target
 	}
 
-	private CanReachFountain(enemy: Hero, fountain: Fountain): boolean {
-		return enemy.Distance2D(fountain) <= KICK_FLIGHT + this.FountainReach(enemy, fountain)
+	private CanReachFountain(hero: npc_dota_hero_earth_spirit, enemy: Hero, fountain: Fountain): boolean {
+		return this.NeededFlight(enemy, fountain) <= this.KickFlight(hero, enemy)
+	}
+
+	private NeededFlight(enemy: Hero, fountain: Fountain): number {
+		return enemy.Distance2D(fountain) - this.FountainReach(enemy, fountain)
+	}
+
+	private KickFlight(hero: npc_dota_hero_earth_spirit, enemy: Hero): number {
+		const smash = hero.GetAbilityByClass(earth_spirit_boulder_smash)
+		if (this.Petrified(hero, enemy)) {
+			return this.FlightSpecial(smash, PETRIFIED_FLIGHT_SPECIALS, KICK_FLIGHT_PETRIFIED)
+		}
+		return this.FlightSpecial(smash, HERO_FLIGHT_SPECIALS, KICK_FLIGHT_HERO)
+	}
+
+	private Petrified(hero: npc_dota_hero_earth_spirit, enemy: Hero): boolean {
+		if (enemy.HasBuffByName(PETRIFY_MODIFIER)) {
+			return true
+		}
+		const petrify = hero.GetAbilityByName(PETRIFY_ABILITY)
+		return petrify !== undefined && petrify.Level > 0 && petrify.CanBeCasted()
+	}
+
+	private FlightSpecial(smash: Nullable<earth_spirit_boulder_smash>, names: string[], fallback: number): number {
+		if (smash === undefined) {
+			return fallback
+		}
+		for (const name of names) {
+			const value = smash.GetSpecialValue(name)
+			if (value > 0) {
+				return value
+			}
+		}
+		return fallback
 	}
 
 	private FountainReach(enemy: Hero, fountain: Fountain): number {
@@ -284,10 +321,13 @@ export class FountainKick {
 		return hero.Position.Extend(position, range)
 	}
 
-	private State(hero: npc_dota_hero_earth_spirit, enemy: Hero): KickState {
+	private State(hero: npc_dota_hero_earth_spirit, enemy: Hero, fountain: Fountain): KickState {
 		const smash = hero.GetAbilityByClass(earth_spirit_boulder_smash)
 		if (smash === undefined || smash.Level === 0) {
 			return KickState.Denied
+		}
+		if (this.NeededFlight(enemy, fountain) > this.KickFlight(hero, enemy)) {
+			return KickState.NoAghs
 		}
 		if (enemy.HasBuffByName(BKB_MODIFIER) || enemy.HasBuffByName(LINKEN_MODIFIER)) {
 			return KickState.Denied
@@ -306,13 +346,14 @@ export class FountainKick {
 			case KickState.Ready:
 				return READY_COLOR
 			case KickState.Denied:
+			case KickState.NoAghs:
 				return DENIED_COLOR
 			default:
 				return WAIT_COLOR
 		}
 	}
 
-	private StateText(hero: npc_dota_hero_earth_spirit, enemy: Hero, state: KickState): string {
+	private StateText(hero: npc_dota_hero_earth_spirit, enemy: Hero, fountain: Fountain, state: KickState): string {
 		switch (state) {
 			case KickState.Ready:
 				return "KILL CONFIRMED"
@@ -320,6 +361,10 @@ export class FountainKick {
 				const smash = hero.GetAbilityByClass(earth_spirit_boulder_smash)
 				const missing = Math.ceil((smash?.ManaCost ?? 0) - hero.Mana)
 				return `NEED MANA (-${Math.max(missing, 0)}MP)`
+			}
+			case KickState.NoAghs: {
+				const missing = Math.ceil(this.NeededFlight(enemy, fountain) - this.KickFlight(hero, enemy))
+				return `NO PETRIFY (-${Math.max(missing, 0)})`
 			}
 			case KickState.Denied:
 				return enemy.HasBuffByName(LINKEN_MODIFIER) ? "TARGET LINKEN" : "TARGET BKB / DENIED"
@@ -329,9 +374,12 @@ export class FountainKick {
 	}
 
 	private DrawPath(hero: npc_dota_hero_earth_spirit, enemy: Hero, fountain: Fountain): void {
-		const state = this.State(hero, enemy)
+		const state = this.State(hero, enemy, fountain)
 		const color = this.StateColor(state)
-		const landing = enemy.Position.Extend(fountain.Position, Math.min(KICK_FLIGHT, enemy.Distance2D(fountain)))
+		const landing = enemy.Position.Extend(
+			fountain.Position,
+			Math.min(this.KickFlight(hero, enemy), enemy.Distance2D(fountain))
+		)
 		this.particles.DrawArrow2D(ARROW_KEY, enemy, {
 			Start: enemy.Position,
 			End: landing,
@@ -356,18 +404,21 @@ export class FountainKick {
 		}
 		const held = this.menu.KickToFountain.isPressed
 		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
-			if (!this.IsValidTarget(enemy) || !this.CanReachFountain(enemy, fountain)) {
+			if (!this.IsValidTarget(enemy)) {
+				continue
+			}
+			if (this.NeededFlight(enemy, fountain) > KICK_FLIGHT_PETRIFIED) {
 				continue
 			}
 			if (!held && hero.Distance2D(enemy) > LOCK_RADIUS) {
 				continue
 			}
-			const state = this.State(hero, enemy)
+			const state = this.State(hero, enemy, fountain)
 			const color = this.StateColor(state)
-			if (held) {
+			if (held && state !== KickState.NoAghs) {
 				this.DrawCage(enemy, color)
 			}
-			this.DrawCard(hero, enemy, state, color)
+			this.DrawCard(hero, enemy, fountain, state, color)
 		}
 	}
 
@@ -400,7 +451,13 @@ export class FountainKick {
 		}
 	}
 
-	private DrawCard(hero: npc_dota_hero_earth_spirit, enemy: Hero, state: KickState, color: Color): void {
+	private DrawCard(
+		hero: npc_dota_hero_earth_spirit,
+		enemy: Hero,
+		fountain: Fountain,
+		state: KickState,
+		color: Color
+	): void {
 		const anchor = this.ToScreen(enemy.Position.Add(new Vector3(0, 0, CAGE_HEIGHT + 60)))
 		if (anchor === undefined) {
 			return
@@ -410,7 +467,7 @@ export class FountainKick {
 		RendererSDK.FilledRect(position, size, CARD_BACKGROUND)
 		RendererSDK.OutlinedRect(position, size, 2, color)
 		RendererSDK.Text(
-			this.StateText(hero, enemy, state),
+			this.StateText(hero, enemy, fountain, state),
 			position.Add(new Vector2(10, 6)),
 			color,
 			RendererSDK.DefaultFontName,

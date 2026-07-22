@@ -38,7 +38,12 @@ const ROLL_CLOSE_RANGE = 300
 const ROLL_SPEED_FALLBACK = 1600
 const ROLL_REACH = 1660
 const SMASH_REACH = 2160
+const SMASH_PICKUP_RADIUS = 150
 const STONE_BASE_RANGE = 1100
+const MAGNETIZE_RADIUS = 400
+const MAGNETIZE_SPREAD_RADIUS = 400
+const MAGNETIZE_REFRESH_TIME = 0.8
+const MAGNETIZE_REFRESH_LOCK = 1
 const TARGET_LINE_KEY = "heroes_combo_target_line"
 const TARGET_LINE_COLOR = new Color(255, 40, 40)
 
@@ -47,6 +52,7 @@ export class ComboManager {
 	private pendingAbility: Nullable<Ability>
 	private pendingTime = 0
 	private lastAttackTime = 0
+	private lastRefreshTime = 0
 
 	constructor(private readonly menu: EarthSpiritMenu) {
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
@@ -96,6 +102,10 @@ export class ComboManager {
 
 		const distance = hero.Distance2D(enemy)
 
+		if (this.RefreshMagnetize(hero, stone, enemy, distance)) {
+			return
+		}
+
 		if (this.Enabled("earth_spirit_geomagnetic_grip") && this.Ready(grip) && this.InRange(hero, grip!, enemy)) {
 			const behind = hero.Position.Extend(enemy.Position, distance + GRIP_STONE_BEHIND)
 			if (this.HasStoneNear(behind, STONE_NEAR_RADIUS)) {
@@ -103,6 +113,7 @@ export class ComboManager {
 				return
 			}
 			if (distance + GRIP_STONE_BEHIND <= this.StoneRange(hero, stone) && this.PlaceStone(hero, stone, behind)) {
+				this.Cast(hero, grip!, enemy.Position)
 				return
 			}
 		}
@@ -129,24 +140,25 @@ export class ComboManager {
 			return
 		}
 
-		if (this.Enabled("earth_spirit_boulder_smash") && this.Ready(smash) && this.InRange(hero, smash!, enemy)) {
-			if (this.HasStoneNear(hero.Position, STONE_NEAR_RADIUS)) {
-				this.Cast(hero, smash!, enemy.Position)
-				return
-			}
-			if (this.PlaceStone(hero, stone, hero.Position)) {
-				return
-			}
-		}
-
 		if (
 			this.Enabled("earth_spirit_magnetize") &&
 			this.Ready(magnetize) &&
 			!enemy.HasBuffByName(MAGNETIZE_MODIFIER) &&
-			this.InRange(hero, magnetize!, enemy)
+			distance <= this.MagnetizeRadius(magnetize!)
 		) {
 			this.CastAuto(hero, magnetize!, enemy)
 			return
+		}
+
+		if (this.Enabled("earth_spirit_boulder_smash") && this.Ready(smash) && this.InRange(hero, smash!, enemy)) {
+			if (this.HasStoneNear(hero.Position, SMASH_PICKUP_RADIUS)) {
+				this.Cast(hero, smash!, enemy.Position)
+				return
+			}
+			if (this.PlaceStone(hero, stone, hero.Position)) {
+				this.Cast(hero, smash!, enemy.Position)
+				return
+			}
 		}
 
 		if (
@@ -160,6 +172,45 @@ export class ComboManager {
 		}
 
 		this.Attack(hero, enemy)
+	}
+
+	private RefreshMagnetize(
+		hero: npc_dota_hero_earth_spirit,
+		stone: Nullable<earth_spirit_stone_caller>,
+		enemy: Hero,
+		distance: number
+	): boolean {
+		const now = GameState.RawGameTime
+		if (now - this.lastRefreshTime < MAGNETIZE_REFRESH_LOCK) {
+			return false
+		}
+		const buff = enemy.GetBuffByName(MAGNETIZE_MODIFIER)
+		if (buff === undefined || distance > this.StoneRange(hero, stone)) {
+			return false
+		}
+		if (buff.RemainingTime > MAGNETIZE_REFRESH_TIME && !this.HasUnmagnetizedNear(enemy)) {
+			return false
+		}
+		if (!this.PlaceStone(hero, stone, enemy.Position)) {
+			return false
+		}
+		this.lastRefreshTime = now
+		return true
+	}
+
+	private HasUnmagnetizedNear(enemy: Hero): boolean {
+		return EntityManager.GetEntitiesByClass(Hero).some(
+			other =>
+				other !== enemy &&
+				this.IsValidTarget(other) &&
+				other.Distance2D(enemy) <= MAGNETIZE_SPREAD_RADIUS &&
+				!other.HasBuffByName(MAGNETIZE_MODIFIER)
+		)
+	}
+
+	private MagnetizeRadius(magnetize: earth_spirit_magnetize): number {
+		const radius = magnetize.GetSpecialValue("radius")
+		return radius > 0 ? radius : MAGNETIZE_RADIUS
 	}
 
 	private Attack(hero: npc_dota_hero_earth_spirit, enemy: Hero): void {
@@ -363,6 +414,7 @@ export class ComboManager {
 		this.pendingAbility = undefined
 		this.pendingTime = 0
 		this.lastAttackTime = 0
+		this.lastRefreshTime = 0
 		this.ClearTarget()
 	}
 

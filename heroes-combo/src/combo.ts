@@ -89,10 +89,6 @@ export class ComboManager {
 		const petrify = hero.GetAbilityByName(PETRIFY_ABILITY)
 
 		const distance = hero.Distance2D(enemy)
-		if (distance > this.EngageRange(hero, grip, rolling, smash, magnetize, petrify)) {
-			this.Attack(hero, enemy)
-			return
-		}
 
 		if (this.Enabled("earth_spirit_geomagnetic_grip") && this.Ready(grip) && this.InRange(hero, grip!, enemy)) {
 			const behind = hero.Position.Extend(enemy.Position, distance + GRIP_STONE_BEHIND)
@@ -257,39 +253,6 @@ export class ComboManager {
 		const speed = rolling.GetBaseSpeedForLevel(rolling.Level) || ROLL_SPEED_FALLBACK
 		const duration = rolling.GetSpecialValue("duration")
 		return duration > 0 ? speed * duration : speed
-	}
-
-	private EngageRange(
-		hero: npc_dota_hero_earth_spirit,
-		grip: Nullable<earth_spirit_geomagnetic_grip>,
-		rolling: Nullable<earth_spirit_rolling_boulder>,
-		smash: Nullable<earth_spirit_boulder_smash>,
-		magnetize: Nullable<earth_spirit_magnetize>,
-		petrify: Nullable<Ability>
-	): number {
-		let range = Number.MAX_VALUE
-		const consider = (ability: Nullable<Ability>, name: string) => {
-			if (!this.Usable(ability, name)) {
-				return
-			}
-			const value = this.AbilityRange(ability!)
-			if (value > 0) {
-				range = Math.min(range, value)
-			}
-		}
-		consider(grip, "earth_spirit_geomagnetic_grip")
-		consider(rolling, "earth_spirit_rolling_boulder")
-		consider(smash, "earth_spirit_boulder_smash")
-		consider(magnetize, "earth_spirit_magnetize")
-		consider(petrify, PETRIFY_ABILITY)
-		if (range === Number.MAX_VALUE) {
-			return range
-		}
-		return Math.max(range, hero.GetAttackRange())
-	}
-
-	private Usable(ability: Nullable<Ability>, name: string): boolean {
-		return ability !== undefined && ability.Level > 0 && this.Enabled(name)
 	}
 
 	private CastAuto(hero: npc_dota_hero_earth_spirit, ability: Ability, enemy: Hero): void {

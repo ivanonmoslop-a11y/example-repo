@@ -15,6 +15,7 @@ export class EarthSpiritMenu {
 	public readonly State: Menu.Toggle
 	public readonly ComboKey: Menu.KeyBind
 	public readonly ComboAbilities: Menu.ImageSelector
+	public readonly ShowDebug: Menu.Toggle
 	public readonly AutoRemnant: Menu.Toggle
 	public readonly BoulderSmash: Menu.Toggle
 	public readonly GeomagneticGrip: Menu.Toggle
@@ -39,6 +40,11 @@ export class EarthSpiritMenu {
 			new Map(COMBO_ABILITIES.map(name => [name, true])),
 			"Клик по иконке — вкл/выкл скилл в комбо",
 			true
+		)
+		this.ShowDebug = combo.AddToggle(
+			"Show Debug",
+			false,
+			"Показывает дистанцию до цели и дальность\nкаждого скилла, пока зажато комбо"
 		)
 
 		const remnant = tree.AddNode("Auto Remnant", ImageData.GetSpellTexture("earth_spirit_stone_caller"))

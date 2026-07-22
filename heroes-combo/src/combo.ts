@@ -20,6 +20,8 @@ import {
 	LocalPlayer,
 	npc_dota_hero_earth_spirit,
 	ParticlesSDK,
+	RendererSDK,
+	Vector2,
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
@@ -34,6 +36,7 @@ const GRIP_STONE_BEHIND = 150
 const ROLL_PLACE_DISTANCE = 250
 const ROLL_CLOSE_RANGE = 300
 const ROLL_SPEED_FALLBACK = 1600
+const STONE_RANGE_FALLBACK = 500
 const TARGET_LINE_KEY = "heroes_combo_target_line"
 const TARGET_LINE_COLOR = new Color(255, 40, 40)
 
@@ -45,6 +48,7 @@ export class ComboManager {
 
 	constructor(private readonly menu: EarthSpiritMenu) {
 		EventsSDK.on("PostDataUpdate", this.PostDataUpdate.bind(this))
+		EventsSDK.on("Draw", this.Draw.bind(this))
 		EventsSDK.on("GameEnded", this.GameEnded.bind(this))
 	}
 
@@ -92,12 +96,11 @@ export class ComboManager {
 
 		if (this.Enabled("earth_spirit_geomagnetic_grip") && this.Ready(grip) && this.InRange(hero, grip!, enemy)) {
 			const behind = hero.Position.Extend(enemy.Position, distance + GRIP_STONE_BEHIND)
-			const stonePosition = this.StonePosition(hero, stone, behind)
-			if (this.HasStoneNear(stonePosition, STONE_NEAR_RADIUS)) {
+			if (this.HasStoneNear(behind, STONE_NEAR_RADIUS)) {
 				this.Cast(hero, grip!, enemy.Position)
 				return
 			}
-			if (this.PlaceStone(hero, stone, stonePosition)) {
+			if (distance + GRIP_STONE_BEHIND <= this.StoneRange(stone) && this.PlaceStone(hero, stone, behind)) {
 				return
 			}
 		}
@@ -112,7 +115,7 @@ export class ComboManager {
 				this.Cast(hero, rolling!, aim)
 				return
 			}
-			const stonePosition = this.StonePosition(hero, stone, hero.Position.Extend(aim, ROLL_PLACE_DISTANCE))
+			const stonePosition = hero.Position.Extend(aim, ROLL_PLACE_DISTANCE)
 			if (this.HasStoneNear(stonePosition, STONE_NEAR_RADIUS)) {
 				this.Cast(hero, rolling!, aim)
 				return
@@ -266,12 +269,9 @@ export class ComboManager {
 		this.LockCast(ability)
 	}
 
-	private StonePosition(
-		hero: npc_dota_hero_earth_spirit,
-		stone: Nullable<earth_spirit_stone_caller>,
-		position: Vector3
-	): Vector3 {
-		return this.ClampToRange(hero, position, stone?.CastRange ?? 0)
+	private StoneRange(stone: Nullable<earth_spirit_stone_caller>): number {
+		const range = stone?.CastRange ?? 0
+		return range > 0 ? range : STONE_RANGE_FALLBACK
 	}
 
 	private PlaceStone(
@@ -313,6 +313,43 @@ export class ComboManager {
 			return position.Clone()
 		}
 		return hero.Position.Extend(position, range)
+	}
+
+	private Draw(): void {
+		if (!this.menu.State.value || !this.menu.ShowDebug.value || !this.menu.ComboKey.isPressed) {
+			return
+		}
+		const hero = this.Hero
+		if (hero === undefined) {
+			return
+		}
+		const enemy = this.FindEnemy()
+		const screen = RendererSDK.WorldToScreen(hero.RealPosition)
+		if (screen === undefined) {
+			return
+		}
+		const stone = hero.GetAbilityByClass(earth_spirit_stone_caller)
+		const lines = [
+			`dist ${enemy === undefined ? "-" : Math.round(hero.Distance2D(enemy))}`,
+			`stone ${stone?.CurrentCharges ?? 0} r${Math.round(this.StoneRange(stone))}`,
+			this.DebugAbility(hero, "grip", hero.GetAbilityByClass(earth_spirit_geomagnetic_grip)),
+			this.DebugAbility(hero, "roll", hero.GetAbilityByClass(earth_spirit_rolling_boulder)),
+			this.DebugAbility(hero, "smash", hero.GetAbilityByClass(earth_spirit_boulder_smash)),
+			this.DebugAbility(hero, "ult", hero.GetAbilityByClass(earth_spirit_magnetize)),
+			this.DebugAbility(hero, "petrify", hero.GetAbilityByName(PETRIFY_ABILITY))
+		]
+		for (let index = 0; index < lines.length; index++) {
+			RendererSDK.Text(lines[index], screen.Add(new Vector2(0, index * 18)), Color.White)
+		}
+	}
+
+	private DebugAbility(hero: npc_dota_hero_earth_spirit, name: string, ability: Nullable<Ability>): string {
+		if (ability === undefined || ability.Level === 0) {
+			return `${name} -`
+		}
+		const range = Math.round(this.AbilityRange(ability))
+		const state = ability.CanBeCasted() ? "ok" : `cd${Math.round(ability.Cooldown)}`
+		return `${name} r${range} ${state}`
 	}
 
 	private DrawTarget(hero: npc_dota_hero_earth_spirit, enemy: Nullable<Hero>): void {

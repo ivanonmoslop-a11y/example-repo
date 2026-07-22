@@ -2,7 +2,7 @@ import { ImageData, Menu } from "github.com/octarine-public/wrapper/index"
 
 import { SquareIcons } from "./icons"
 
-export const PUDGE_ABILITIES = ["pudge_meat_hook", "pudge_rot", "pudge_meat_shield", "pudge_dismember"]
+export const PUDGE_ABILITIES = ["pudge_meat_hook", "pudge_rot", "pudge_flesh_heap", "pudge_dismember"]
 
 export class PudgeMenu {
 	public readonly State: Menu.Toggle
@@ -36,7 +36,7 @@ export class PudgeMenu {
 		this.ComboAfterHook = tree.AddToggle(
 			"Авто-комбо после хука",
 			true,
-			"Успешный хук сам запускает комбо,\nбез зажатой клавиши"
+			"Успешный хук сам запускает комбо.\nЛюбой свой приказ (движение, отмена\nРасчленения) обрывает его"
 		)
 	}
 }

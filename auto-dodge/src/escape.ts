@@ -38,6 +38,11 @@ const SELF_BLINK_TIME = 0.6
 const SAFE_MIN_DIST = 600
 const CANDIDATES = 16
 const FOUNTAIN_BONUS = 150
+// Our own Meat Hook drags a fogged enemy several hundred units toward us in one tick,
+// which is indistinguishable from a blink-in. Blinking away from a target we just
+// hooked throws the hook away, so that target is muted while the drag lasts.
+const HOOK_MODIFIER = "modifier_pudge_meat_hook"
+const HOOK_IMMUNE_TIME = 1.5
 
 const GAP_CLOSERS = new Set([
 	"antimage_blink",
@@ -102,6 +107,7 @@ export class BlinkEscape {
 	private readonly marks: BlinkMark[] = []
 	private readonly events: { text: string; time: number }[] = []
 	private readonly consumed = new Set<number>()
+	private readonly hooked = new Map<number, number>()
 
 	constructor() {
 		EventsSDK.on("ParticleCreated", particle => this.OnParticle(particle))
@@ -158,6 +164,7 @@ export class BlinkEscape {
 		this.detect = enabled || detect
 		this.ResolveBlink(hero)
 		this.TrackOwnBlink()
+		this.UpdateHooked(hero)
 		this.WatchEnemies(hero)
 		this.EvaluateReveals(hero)
 		if (!this.enabled || !hero.IsAlive) {
@@ -188,6 +195,7 @@ export class BlinkEscape {
 		this.marks.length = 0
 		this.events.length = 0
 		this.consumed.clear()
+		this.hooked.clear()
 	}
 
 	private get Hero(): Nullable<Hero> {
@@ -223,6 +231,11 @@ export class BlinkEscape {
 			}
 			const cur = enemy.Position.Clone()
 			const track = this.tracks.get(enemy.Index)
+			if (this.hooked.has(enemy.Index)) {
+				this.reveals.delete(enemy.Index)
+				this.Track(enemy.Index, track, cur, now)
+				continue
+			}
 			const inRange = active && cur.Distance2D(heroPos) <= TRIGGER_RADIUS
 			if (inRange && (track === undefined || now - track.time > CONTINUOUS_GAP)) {
 				this.reveals.set(enemy.Index, {
@@ -289,6 +302,10 @@ export class BlinkEscape {
 			this.marks.shift()
 		}
 		for (const [index, cand] of this.reveals) {
+			if (this.hooked.has(index)) {
+				this.reveals.delete(index)
+				continue
+			}
 			if (now - cand.revealTime > REVEAL_WINDOW || !cand.enemy.IsValid || !cand.enemy.IsAlive) {
 				this.reveals.delete(index)
 				continue
@@ -584,7 +601,42 @@ export class BlinkEscape {
 		)
 	}
 
+	private UpdateHooked(hero: Hero): void {
+		const now = GameState.RawGameTime
+		for (const [index, time] of this.hooked) {
+			if (now - time > HOOK_IMMUNE_TIME) {
+				this.hooked.delete(index)
+			}
+		}
+		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
+			if (!enemy.IsValid || !enemy.IsAlive || enemy.IsIllusion || !enemy.IsEnemy(hero)) {
+				continue
+			}
+			const modifier = enemy.GetBuffByName(HOOK_MODIFIER)
+			if (modifier !== undefined && modifier.Caster === hero) {
+				this.hooked.set(enemy.Index, now)
+			}
+		}
+	}
+
+	private IsHookSuppressed(pos?: Vector3, enemy?: Hero): boolean {
+		if (this.hooked.size === 0) {
+			return false
+		}
+		if (enemy !== undefined) {
+			return this.hooked.has(enemy.Index)
+		}
+		if (pos === undefined || !pos.IsValid) {
+			return false
+		}
+		const near = this.NearestEnemyTo(pos)
+		return near !== undefined && this.hooked.has(near.Index)
+	}
+
 	private Trigger(reason: string, pos?: Vector3, enemy?: Hero): void {
+		if (this.IsHookSuppressed(pos, enemy)) {
+			return
+		}
 		const now = GameState.RawGameTime
 		this.lastTriggerTime = now
 		if (pos !== undefined) {

@@ -25,9 +25,8 @@ import { EarthSpiritMenu } from "./menu"
 
 const MAGNETIZE_MODIFIER = "modifier_earth_spirit_magnetize"
 const PETRIFY_ABILITY = "earth_spirit_petrify"
-const CAST_GAP = 0.25
-const CAST_POINT_MARGIN = 0.1
-const ATTACK_GAP = 0.3
+const ORDER_GUARD = 0.03
+const ATTACK_GAP = 0.1
 const STONE_NEAR_RADIUS = 220
 const GRIP_STONE_BEHIND = 150
 const ROLL_PLACE_DISTANCE = 250
@@ -39,7 +38,8 @@ const TARGET_LINE_COLOR = new Color(255, 40, 40)
 
 export class ComboManager {
 	private readonly particles = new ParticlesSDK()
-	private nextCastTime = 0
+	private pendingAbility: Nullable<Ability>
+	private pendingTime = 0
 	private lastAttackTime = 0
 
 	constructor(private readonly menu: EarthSpiritMenu) {
@@ -73,10 +73,7 @@ export class ComboManager {
 		}
 		const enemy = this.FindEnemy()
 		this.DrawTarget(hero, enemy)
-		if (hero.IsStunned || enemy === undefined) {
-			return
-		}
-		if (GameState.RawGameTime < this.nextCastTime) {
+		if (hero.IsStunned || enemy === undefined || !this.CanAct()) {
 			return
 		}
 		this.Execute(hero, enemy)
@@ -163,8 +160,26 @@ export class ComboManager {
 		if (now - this.lastAttackTime < ATTACK_GAP) {
 			return
 		}
+		if (hero.IsAttacking && hero.Distance2D(enemy) <= hero.GetAttackRange(enemy)) {
+			return
+		}
 		this.lastAttackTime = now
 		hero.AttackTarget(enemy)
+	}
+
+	private CanAct(): boolean {
+		const ability = this.pendingAbility
+		if (ability === undefined) {
+			return true
+		}
+		if (ability.IsValid && ability.IsInAbilityPhase) {
+			return false
+		}
+		if (GameState.RawGameTime - this.pendingTime < GameState.InputLag + ORDER_GUARD) {
+			return false
+		}
+		this.pendingAbility = undefined
+		return true
 	}
 
 	private PredictRoll(hero: npc_dota_hero_earth_spirit, rolling: earth_spirit_rolling_boulder, enemy: Hero): Vector3 {
@@ -242,8 +257,8 @@ export class ComboManager {
 	}
 
 	private LockCast(ability: Ability): void {
-		const wait = Math.max(CAST_GAP, ability.CastPoint + CAST_POINT_MARGIN)
-		this.nextCastTime = GameState.RawGameTime + wait
+		this.pendingAbility = ability
+		this.pendingTime = GameState.RawGameTime
 	}
 
 	private HasStoneNear(position: Vector3, radius: number): boolean {
@@ -272,7 +287,8 @@ export class ComboManager {
 	}
 
 	private Reset(): void {
-		this.nextCastTime = 0
+		this.pendingAbility = undefined
+		this.pendingTime = 0
 		this.lastAttackTime = 0
 		this.ClearTarget()
 	}

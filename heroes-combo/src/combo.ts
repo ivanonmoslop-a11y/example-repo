@@ -37,6 +37,7 @@ const ROLL_PLACE_DISTANCE = 250
 const ROLL_CLOSE_RANGE = 300
 const ROLL_SPEED_FALLBACK = 1600
 const ROLL_REACH = 1660
+const ROLL_BASE_DISTANCE = 800
 const SMASH_REACH = 2160
 const SMASH_PICKUP_RADIUS = 150
 const ROLL_HIT_RADIUS = 160
@@ -132,7 +133,7 @@ export class ComboManager {
 				this.Cast(hero, rolling!, aim)
 				return
 			}
-			if (this.HasStoneOnRollPath(hero, aim)) {
+			if (this.HasStoneOnRollPath(hero, rolling!, aim)) {
 				this.Cast(hero, rolling!, aim)
 				return
 			}
@@ -210,6 +211,11 @@ export class ComboManager {
 				other.Distance2D(enemy) <= MAGNETIZE_SPREAD_RADIUS &&
 				!other.HasBuffByName(MAGNETIZE_MODIFIER)
 		)
+	}
+
+	private RollBaseDistance(rolling: earth_spirit_rolling_boulder): number {
+		const distance = rolling.GetSpecialValue("distance")
+		return distance > 0 ? distance : ROLL_BASE_DISTANCE
 	}
 
 	private MagnetizeRadius(magnetize: earth_spirit_magnetize): number {
@@ -365,12 +371,16 @@ export class ComboManager {
 		this.pendingTime = GameState.RawGameTime
 	}
 
-	private HasStoneOnRollPath(hero: npc_dota_hero_earth_spirit, aim: Vector3): boolean {
+	private HasStoneOnRollPath(
+		hero: npc_dota_hero_earth_spirit,
+		rolling: earth_spirit_rolling_boulder,
+		aim: Vector3
+	): boolean {
 		if (hero.Distance2D(aim) < 1) {
 			return false
 		}
 		const origin = hero.Position
-		const finish = origin.Extend(aim, ROLL_REACH)
+		const finish = origin.Extend(aim, this.RollBaseDistance(rolling))
 		const start = new Vector2(origin.x, origin.y)
 		const end = new Vector2(finish.x, finish.y)
 		if (this.HasPendingStone()) {

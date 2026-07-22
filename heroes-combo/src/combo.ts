@@ -1,6 +1,7 @@
 import {
 	Ability,
 	Color,
+	DOTA_ABILITY_BEHAVIOR,
 	DOTAGameState,
 	DOTAGameUIState,
 	earth_spirit_boulder_smash,
@@ -33,7 +34,6 @@ const GRIP_STONE_BEHIND = 150
 const ROLL_PLACE_DISTANCE = 250
 const ROLL_CLOSE_RANGE = 300
 const ROLL_SPEED_FALLBACK = 1600
-const RANGE_BUFFER = 100
 const TARGET_LINE_KEY = "heroes_combo_target_line"
 const TARGET_LINE_COLOR = new Color(255, 40, 40)
 
@@ -88,6 +88,12 @@ export class ComboManager {
 		const magnetize = hero.GetAbilityByClass(earth_spirit_magnetize)
 		const petrify = hero.GetAbilityByName(PETRIFY_ABILITY)
 
+		const distance = hero.Distance2D(enemy)
+		if (distance > this.EngageRange(hero, stone, grip, rolling, smash, magnetize, petrify)) {
+			this.Attack(hero, enemy)
+			return
+		}
+
 		if (this.Enabled("earth_spirit_geomagnetic_grip") && this.Ready(grip) && this.InRange(hero, grip!, enemy)) {
 			const behind = hero.Position.Extend(enemy.Position, hero.Distance2D(enemy) + GRIP_STONE_BEHIND)
 			const stonePosition = this.StonePosition(hero, stone, behind)
@@ -138,7 +144,7 @@ export class ComboManager {
 			!enemy.HasBuffByName(MAGNETIZE_MODIFIER) &&
 			this.InRange(hero, magnetize!, enemy)
 		) {
-			this.Cast(hero, magnetize!, enemy.Position)
+			this.CastAuto(hero, magnetize!, enemy)
 			return
 		}
 
@@ -148,8 +154,7 @@ export class ComboManager {
 			this.Ready(petrify) &&
 			this.InRange(hero, petrify, enemy)
 		) {
-			hero.CastTarget(petrify, enemy)
-			this.LockCast(petrify)
+			this.CastAuto(hero, petrify, enemy)
 			return
 		}
 
@@ -213,7 +218,6 @@ export class ComboManager {
 	private IsValidTarget(enemy: Hero): boolean {
 		return (
 			enemy.IsValid &&
-			enemy.IsSpawned &&
 			enemy.LifeState === LifeState.LIFE_ALIVE &&
 			enemy.IsVisible &&
 			enemy.IsEnemy() &&
@@ -230,8 +234,77 @@ export class ComboManager {
 	}
 
 	private InRange(hero: npc_dota_hero_earth_spirit, ability: Ability, enemy: Hero): boolean {
+		const range = this.AbilityRange(ability)
+		return range <= 0 || hero.Distance2D(enemy) <= range
+	}
+
+	private AbilityRange(ability: Ability): number {
+		if (ability instanceof earth_spirit_rolling_boulder) {
+			return this.RollDistance(ability)
+		}
 		const range = ability.CastRange
-		return range <= 0 || hero.Distance2D(enemy) <= range + RANGE_BUFFER
+		if (range > 0) {
+			return range
+		}
+		return ability.GetSpecialValue("radius")
+	}
+
+	private RollDistance(rolling: earth_spirit_rolling_boulder): number {
+		const distance = rolling.GetSpecialValue("distance")
+		if (distance > 0) {
+			return distance
+		}
+		const speed = rolling.GetBaseSpeedForLevel(rolling.Level) || ROLL_SPEED_FALLBACK
+		const duration = rolling.GetSpecialValue("duration")
+		return duration > 0 ? speed * duration : speed
+	}
+
+	private GripRange(grip: earth_spirit_geomagnetic_grip, stone: Nullable<earth_spirit_stone_caller>): number {
+		const stoneRange = (stone?.CastRange ?? 0) - GRIP_STONE_BEHIND
+		return Math.min(this.AbilityRange(grip), Math.max(stoneRange, 0))
+	}
+
+	private EngageRange(
+		hero: npc_dota_hero_earth_spirit,
+		stone: Nullable<earth_spirit_stone_caller>,
+		grip: Nullable<earth_spirit_geomagnetic_grip>,
+		rolling: Nullable<earth_spirit_rolling_boulder>,
+		smash: Nullable<earth_spirit_boulder_smash>,
+		magnetize: Nullable<earth_spirit_magnetize>,
+		petrify: Nullable<Ability>
+	): number {
+		let range = Number.MAX_VALUE
+		if (this.Usable(grip, "earth_spirit_geomagnetic_grip")) {
+			range = Math.min(range, this.GripRange(grip!, stone))
+		}
+		if (this.Usable(rolling, "earth_spirit_rolling_boulder")) {
+			range = Math.min(range, this.AbilityRange(rolling!))
+		}
+		if (this.Usable(smash, "earth_spirit_boulder_smash")) {
+			range = Math.min(range, this.AbilityRange(smash!))
+		}
+		if (this.Usable(magnetize, "earth_spirit_magnetize")) {
+			range = Math.min(range, this.AbilityRange(magnetize!))
+		}
+		if (this.Usable(petrify, PETRIFY_ABILITY)) {
+			range = Math.min(range, this.AbilityRange(petrify!))
+		}
+		return range === Number.MAX_VALUE ? hero.GetAttackRange() : range
+	}
+
+	private Usable(ability: Nullable<Ability>, name: string): boolean {
+		return ability !== undefined && ability.Level > 0 && this.Enabled(name)
+	}
+
+	private CastAuto(hero: npc_dota_hero_earth_spirit, ability: Ability, enemy: Hero): void {
+		if (ability.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_NO_TARGET)) {
+			hero.CastNoTarget(ability)
+		} else if (ability.HasBehavior(DOTA_ABILITY_BEHAVIOR.DOTA_ABILITY_BEHAVIOR_UNIT_TARGET)) {
+			hero.CastTarget(ability, enemy)
+		} else {
+			hero.CastPosition(ability, enemy.Position)
+		}
+		this.LockCast(ability)
 	}
 
 	private StonePosition(

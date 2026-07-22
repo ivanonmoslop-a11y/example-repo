@@ -197,7 +197,7 @@ export class KickCombo {
 	}
 
 	private IsSpawnedHero(hero: Hero): boolean {
-		return hero.IsValid && hero.IsSpawned && hero.LifeState === LifeState.LIFE_ALIVE
+		return hero.IsValid && hero.LifeState === LifeState.LIFE_ALIVE
 	}
 
 	private GetBlink(hero: npc_dota_hero_earth_spirit): Nullable<Item> {

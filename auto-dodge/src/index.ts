@@ -24,7 +24,7 @@ import {
 	Vector3
 } from "github.com/octarine-public/wrapper/index"
 
-import { CastMode, CounterSlot, CreateSlots, DangerKind } from "./counters"
+import { CastMode, CounterSlot, CreateSlots, DangerKind, DARK_PACT_NAMES } from "./counters"
 import { AutoDisable, CreateDisableSlots, DISABLE_TRIGGER_AGE } from "./disable"
 import { BlinkEscape } from "./escape"
 import { MenuManager } from "./menu"
@@ -81,6 +81,19 @@ const TARGET_DELAY_MODIFIERS: ReadonlyMap<string, string> = new Map([
 	["modifier_lina_laguna_blade", "lina_laguna_blade"],
 	["modifier_lion_finger_of_death", "lion_finger_of_death"],
 	["modifier_lion_finger_of_death_delay", "lion_finger_of_death"]
+])
+
+const DARK_PACT_ITEM_MODIFIERS: ReadonlyMap<string, string> = new Map([
+	["modifier_rod_of_atos_debuff", "item_rod_of_atos"],
+	["modifier_item_gungir_root", "item_gungir"],
+	["modifier_gungir_ensnare", "item_gungir"],
+	["modifier_item_harpoon", "item_harpoon"],
+	["modifier_item_harpoon_slow", "item_harpoon"],
+	["modifier_item_nullifier_mute", "item_nullifier"],
+	["modifier_item_ethereal_blade_slow", "item_ethereal_blade"],
+	["modifier_item_ethereal_blade_ethereal", "item_ethereal_blade"],
+	["modifier_item_orchid_malevolence", "item_orchid"],
+	["modifier_item_bloodthorn_debuff", "item_bloodthorn"]
 ])
 
 const enum AreaMode {
@@ -412,8 +425,35 @@ new (class AutoDodge {
 		}
 		this.ThinkerDanger(hero, found)
 		this.ZoneDanger(hero, found)
+		this.DispelDebuffDanger(hero, found)
 		found.sort((a, b) => a.timeLeft - b.timeLeft)
 		return found
+	}
+
+	private DispelDebuffDanger(hero: Hero, found: Danger[]): void {
+		for (const buff of hero.Buffs) {
+			const caster = buff.Caster
+			if (!(caster instanceof Unit) || !caster.IsEnemy(hero)) {
+				continue
+			}
+			const name = this.DispelName(buff)
+			if (name === undefined) {
+				continue
+			}
+			found.push({ kind: DangerKind.Debuff, name, timeLeft: 0.01, route: "debuff" })
+		}
+	}
+
+	private DispelName(buff: Modifier): Nullable<string> {
+		const abilName = buff.Ability?.Name
+		if (abilName !== undefined && DARK_PACT_NAMES.has(abilName)) {
+			return abilName
+		}
+		const derived = AbilityNameFromModifier(buff.Name)
+		if (DARK_PACT_NAMES.has(derived)) {
+			return derived
+		}
+		return DARK_PACT_ITEM_MODIFIERS.get(buff.Name)
 	}
 
 	private TrackingTimeLeft(position: Vector3, speed: number, hero: Hero): number {
@@ -1278,7 +1318,13 @@ new (class AutoDodge {
 		let dangerText = "no danger"
 		if (danger !== undefined) {
 			const kind =
-				danger.kind === DangerKind.Projectile ? "proj" : danger.kind === DangerKind.AreaCast ? "area" : "cast"
+				danger.kind === DangerKind.Projectile
+					? "proj"
+					: danger.kind === DangerKind.AreaCast
+					? "area"
+					: danger.kind === DangerKind.Debuff
+					? "debuff"
+					: "cast"
 			dangerText = `${kind}/${danger.route} ${danger.name} ${Math.round(danger.timeLeft * 1000)}ms`
 			if (dangers.length > 1) {
 				dangerText += ` +${dangers.length - 1}`

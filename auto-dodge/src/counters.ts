@@ -3,6 +3,7 @@ import { Ability, GameState, Hero, ImageData } from "github.com/octarine-public/
 const GUARD_SAFETY = 0.02
 const MANTA_DAMAGE_LEAD = 0.01
 const MANTA_DAMAGE_WINDOW = 0.03
+const DARK_PACT_LEAD = 0.45
 
 interface SpellTiming {
 	readonly minTimeLeft: number
@@ -20,7 +21,8 @@ export const enum CastMode {
 export const enum DangerKind {
 	Projectile,
 	Cast,
-	AreaCast
+	AreaCast,
+	Debuff
 }
 
 export interface CounterDef {
@@ -37,7 +39,97 @@ export interface CounterDef {
 	readonly triggerWindow?: number
 	readonly spellTimings?: Readonly<Record<string, SpellTiming>>
 	readonly spells?: string[]
+	readonly dispel?: boolean
+	readonly dispelLead?: number
 }
+
+const DARK_PACT_SPELLS = [
+	"chaos_knight_chaos_bolt",
+	"alchemist_unstable_concoction",
+	"alchemist_unstable_concoction_throw",
+	"dawnbreaker_solar_guardian",
+	"dawnbreaker_fire_wreath",
+	"centaur_hoof_stomp",
+	"earthshaker_fissure",
+	"dragon_knight_dragon_tail",
+	"doom_bringer_doom",
+	"pangolier_rolling_thunder",
+	"kunkka_ghostship",
+	"lifestealer_open_wounds",
+	"legion_commander_duel",
+	"huskar_life_break",
+	"huskar_inner_fire",
+	"mars_spear",
+	"ogre_magi_fireblast",
+	"ogre_magi_ignite",
+	"ogre_magi_unrefined_fireblast",
+	"pudge_dismember",
+	"primal_beast_pulverize",
+	"spirit_breaker_charge_of_darkness",
+	"spirit_breaker_nether_strike",
+	"slardar_slithereen_crush",
+	"sven_storm_bolt",
+	"tidehunter_ravage",
+	"skeleton_king_hellfire_blast",
+	"tusk_snowball",
+	"antimage_blink",
+	"antimage_mana_void",
+	"bloodseeker_blood_bath",
+	"drow_ranger_wave_of_silence",
+	"gyrocopter_homing_missile",
+	"hoodwink_bushwhack",
+	"monkey_king_boundless_strike",
+	"naga_siren_ensnare",
+	"morphling_adaptive_strike_agi",
+	"morphling_adaptive_strike_str",
+	"sniper_assassinate",
+	"vengefulspirit_magic_missile",
+	"disruptor_thunder_strike",
+	"chen_penitence",
+	"dark_willow_terrorize",
+	"crystal_maiden_frostbite",
+	"ancient_apparition_cold_feet",
+	"enchantress_enchant",
+	"invoker_cold_snap",
+	"grimstroke_spirit_walk",
+	"grimstroke_ink_creature",
+	"grimstroke_soul_chain",
+	"jakiro_ice_path",
+	"leshrac_split_earth",
+	"lina_light_strike_array",
+	"sandking_burrowstrike",
+	"muerta_dead_shot",
+	"pugna_decrepify",
+	"queenofpain_blink",
+	"queenofpain_shadow_strike",
+	"shadow_shaman_shackles",
+	"skywrath_mage_ancient_seal",
+	"winter_wyvern_winters_curse",
+	"silencer_global_silence",
+	"warlock_rain_of_chaos",
+	"batrider_flaming_lasso",
+	"witch_doctor_paralyzing_cask",
+	"bane_enfeeble",
+	"bane_nightmare",
+	"bane_fiends_grip",
+	"techies_suicide",
+	"windrunner_shackleshot",
+	"venomancer_noxious_plague",
+	"snapfire_firesnap_cookie",
+	"magnataur_reverse_polarity",
+	"nyx_assassin_impale",
+	"death_prophet_silence",
+	"beastmaster_primal_roar",
+	"item_rod_of_atos",
+	"item_gungir",
+	"item_harpoon",
+	"item_nullifier",
+	"item_ethereal_blade",
+	"item_orchid",
+	"item_bloodthorn"
+]
+
+export const DARK_PACT_NAMES: ReadonlySet<string> = new Set(DARK_PACT_SPELLS)
 
 const MANTA_SPELLS = [
 	"axe_culling_blade",
@@ -271,6 +363,20 @@ const ABILITY_DEFS: CounterDef[] = [
 		vsArea: false,
 		activationDelay: 0,
 		protection: 15
+	},
+	{
+		key: "dark_pact",
+		isItem: false,
+		names: ["slark_dark_pact"],
+		mode: CastMode.NoTarget,
+		vsProjectile: false,
+		vsCast: false,
+		vsArea: false,
+		activationDelay: 0,
+		protection: 0,
+		dispel: true,
+		dispelLead: DARK_PACT_LEAD,
+		spells: DARK_PACT_SPELLS
 	}
 ]
 
@@ -315,15 +421,28 @@ export class CounterSlot {
 		return this.GuardEnd
 	}
 
+	public get DispelLead(): number {
+		return this.def.dispelLead ?? 0
+	}
+
 	public TimingStartFor(name: string): number {
+		if (this.def.dispel === true) {
+			return 0
+		}
 		return this.def.spellTimings?.[name]?.minTimeLeft ?? this.TimingStart
 	}
 
 	public TimingEndFor(name: string): number {
+		if (this.def.dispel === true) {
+			return this.DispelLead
+		}
 		return this.def.spellTimings?.[name]?.maxTimeLeft ?? this.TimingEnd
 	}
 
 	public Covers(name: string, timeLeft: number): boolean {
+		if (this.def.dispel === true) {
+			return timeLeft <= this.DispelLead
+		}
 		return timeLeft >= this.TimingStartFor(name) && timeLeft <= this.TimingEndFor(name)
 	}
 
@@ -334,6 +453,12 @@ export class CounterSlot {
 	}
 
 	public Matches(kind: DangerKind, name: string): boolean {
+		if (this.def.dispel === true) {
+			return this.def.spells !== undefined && this.def.spells.includes(name)
+		}
+		if (kind === DangerKind.Debuff) {
+			return false
+		}
 		if (kind === DangerKind.Projectile) {
 			return this.def.vsProjectile
 		}

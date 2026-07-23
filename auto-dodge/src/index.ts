@@ -242,6 +242,13 @@ const SILENCE_PRECAST: ReadonlySet<string> = new Set([
 
 const SILENCE_CAST_SPELLS: ReadonlySet<string> = new Set(["silencer_global_silence", "death_prophet_silence"])
 
+const STUN_PRECAST: ReadonlySet<string> = new Set([
+	"tidehunter_ravage",
+	"earthshaker_echo_slam",
+	"magnataur_reverse_polarity",
+	"earthshaker_fissure"
+])
+
 const DARK_PACT_LINEAR_PARTICLES: ReadonlyMap<string, string> = new Map([
 	["wave_of_silence", "drow_ranger_wave_of_silence"],
 	["drow_ranger_gust", "drow_ranger_wave_of_silence"],
@@ -1408,7 +1415,7 @@ new (class AutoDodge {
 		if (slot.def.dispel !== true) {
 			return true
 		}
-		return danger.committed !== false || SILENCE_PRECAST.has(danger.name)
+		return danger.committed !== false || SILENCE_PRECAST.has(danger.name) || STUN_PRECAST.has(danger.name)
 	}
 
 	private HigherPriorityHandles(hero: Hero, index: number, danger: Danger): boolean {

@@ -70,6 +70,7 @@ const DARK_PACT_SPELLS = [
 	"slardar_slithereen_crush",
 	"sven_storm_bolt",
 	"tidehunter_ravage",
+	"earthshaker_echo_slam",
 	"skeleton_king_hellfire_blast",
 	"tusk_snowball",
 	"antimage_blink",

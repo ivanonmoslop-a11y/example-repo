@@ -2,6 +2,7 @@ import { AbilityData, ImageData, Menu } from "github.com/octarine-public/wrapper
 
 import { SquareIcons } from "./icons"
 import { PudgeMenu } from "./pudge-menu"
+import { SlarkMenu } from "./slark-menu"
 
 AbilityData.ShouldBeDrawable.add("earth_spirit_stone_caller")
 
@@ -171,4 +172,5 @@ export class MenuManager {
 
 	public readonly EarthSpirit = new EarthSpiritMenu(this.Strength)
 	public readonly Pudge = new PudgeMenu(this.Strength)
+	public readonly Slark = new SlarkMenu(this.Agility)
 }

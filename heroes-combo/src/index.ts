@@ -4,6 +4,7 @@ import { FountainKick } from "./fountain"
 import { KickCombo } from "./kick"
 import { MenuManager } from "./menu"
 import { PudgeCombo } from "./pudge"
+import { SlarkCombo } from "./slark"
 
 new (class HeroesCombo {
 	private readonly menu = new MenuManager()
@@ -12,6 +13,7 @@ new (class HeroesCombo {
 	private readonly combo = new ComboManager(this.menu.EarthSpirit)
 	private readonly fountain = new FountainKick(this.menu.EarthSpirit)
 	private readonly pudge = new PudgeCombo(this.menu.Pudge)
+	private readonly slark = new SlarkCombo(this.menu.Slark)
 
 	public get EarthSpirit(): EarthSpiritCombo {
 		return this.earthSpirit
@@ -31,5 +33,9 @@ new (class HeroesCombo {
 
 	public get Pudge(): PudgeCombo {
 		return this.pudge
+	}
+
+	public get Slark(): SlarkCombo {
+		return this.slark
 	}
 })()

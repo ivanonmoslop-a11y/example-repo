@@ -53,9 +53,9 @@ const DARK_PACT_SPELLS = [
 	"earthshaker_fissure",
 	"dragon_knight_dragon_tail",
 	"doom_bringer_doom",
-	"pangolier_rolling_thunder",
+	"earth_spirit_rolling_boulder",
 	"kunkka_ghostship",
-	"lifestealer_open_wounds",
+	"life_stealer_open_wounds",
 	"legion_commander_duel",
 	"huskar_life_break",
 	"huskar_inner_fire",
@@ -94,6 +94,8 @@ const DARK_PACT_SPELLS = [
 	"grimstroke_spirit_walk",
 	"grimstroke_ink_creature",
 	"grimstroke_soul_chain",
+	"keeper_of_the_light_solar_bind",
+	"warlock_shadow_word",
 	"jakiro_ice_path",
 	"leshrac_split_earth",
 	"lina_light_strike_array",
@@ -126,7 +128,10 @@ const DARK_PACT_SPELLS = [
 	"item_nullifier",
 	"item_ethereal_blade",
 	"item_orchid",
-	"item_bloodthorn"
+	"item_bloodthorn",
+	"item_heavens_halberd",
+	"item_disperser",
+	"enemy_blink"
 ]
 
 export const DARK_PACT_NAMES: ReadonlySet<string> = new Set(DARK_PACT_SPELLS)

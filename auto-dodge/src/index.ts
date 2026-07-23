@@ -50,6 +50,7 @@ const LAGUNA_PARTICLE = "lina_spell_laguna_blade"
 const AFTER_EFFECT_LIFETIME = 0.2
 const STARBREAKER_DURATION = 1.1
 const LINA_DAMAGE_DELAY = 0.25
+const GHOSTSHIP_DELAY = 1.4
 const MANTA_IMPACT_PROJECTILES = new Set([
 	"alchemist_unstable_concoction_throw",
 	"huskar_life_break",
@@ -93,7 +94,11 @@ const DARK_PACT_ITEM_MODIFIERS: ReadonlyMap<string, string> = new Map([
 	["modifier_item_ethereal_blade_slow", "item_ethereal_blade"],
 	["modifier_item_ethereal_blade_ethereal", "item_ethereal_blade"],
 	["modifier_item_orchid_malevolence", "item_orchid"],
-	["modifier_item_bloodthorn_debuff", "item_bloodthorn"]
+	["modifier_item_bloodthorn_debuff", "item_bloodthorn"],
+	["modifier_item_heavens_halberd_debuff", "item_heavens_halberd"],
+	["modifier_item_heavens_halberd_disarm", "item_heavens_halberd"],
+	["modifier_item_disperser_slow", "item_disperser"],
+	["modifier_item_disperser_debuff", "item_disperser"]
 ])
 
 const enum AreaMode {
@@ -177,7 +182,8 @@ const AREA_SPELLS: ReadonlyMap<string, AreaDef> = new Map([
 	["invoker_emp", { radius: 675, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 2.9, castDetection: false }],
 	["kunkka_torrent", { radius: 225, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 1.6 }],
 	["bloodseeker_blood_bath", { radius: 600, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 2.6 }],
-	["kunkka_ghostship", { radius: 425, mode: AreaMode.Delayed }],
+	["kunkka_ghostship", { radius: 425, mode: AreaMode.Delayed, delay: GHOSTSHIP_DELAY }],
+	["jakiro_ice_path", { radius: 275, mode: AreaMode.Delayed, delayKeys: ["path_delay"], delay: 1 }],
 	["crystal_maiden_crystal_nova", { radius: 425, mode: AreaMode.Delayed }],
 	["leshrac_split_earth", { radius: 150, mode: AreaMode.Delayed, delayKeys: ["delay"], delay: 0.35 }],
 	[
@@ -223,7 +229,29 @@ interface Danger {
 	timeLeft: number
 	route: string
 	projID?: number
+	committed?: boolean
 }
+
+const SILENCE_PRECAST: ReadonlySet<string> = new Set([
+	"silencer_global_silence",
+	"death_prophet_silence",
+	"skywrath_mage_ancient_seal",
+	"item_orchid",
+	"item_bloodthorn"
+])
+
+const SILENCE_CAST_SPELLS: ReadonlySet<string> = new Set(["silencer_global_silence", "death_prophet_silence"])
+
+const DARK_PACT_LINEAR_PARTICLES: ReadonlyMap<string, string> = new Map([
+	["wave_of_silence", "drow_ranger_wave_of_silence"],
+	["drow_ranger_gust", "drow_ranger_wave_of_silence"],
+	["mars_spear", "mars_spear"]
+])
+
+const ENEMY_BLINK_NAME = "enemy_blink"
+const BLINK_DISPEL_AGE = 0.5
+const CHARGE_NAME = "spirit_breaker_charge_of_darkness"
+const CHARGE_SPEED = 550
 
 interface PendingCast {
 	ability: Ability
@@ -376,10 +404,11 @@ new (class AutoDodge {
 			const ability = proj.Ability ?? lifeBreak ?? particleAbility ?? sourceAbility
 			const abilityName = ability?.Name ?? particleName ?? "projectile"
 			const impactDodge = MANTA_IMPACT_PROJECTILES.has(abilityName)
+			const dispelDodge = DARK_PACT_NAMES.has(abilityName)
 			if (
 				proj.Target !== hero ||
 				proj.IsAttack ||
-				(!proj.IsDodgeable && !impactDodge) ||
+				(!proj.IsDodgeable && !impactDodge && !dispelDodge) ||
 				proj.IsDodged ||
 				this.handled.has(proj.ID)
 			) {
@@ -394,7 +423,7 @@ new (class AutoDodge {
 				timeLeft = this.TrackingTimeLeft(proj.Position, proj.Speed || ability?.Speed || 1, hero)
 			}
 			found.push({
-				kind: !proj.IsDodgeable && impactDodge ? DangerKind.Cast : DangerKind.Projectile,
+				kind: !proj.IsDodgeable && (impactDodge || dispelDodge) ? DangerKind.Cast : DangerKind.Projectile,
 				name: abilityName,
 				timeLeft,
 				route: "proj",
@@ -426,6 +455,9 @@ new (class AutoDodge {
 		this.ThinkerDanger(hero, found)
 		this.ZoneDanger(hero, found)
 		this.DispelDebuffDanger(hero, found)
+		this.SilenceCastDanger(hero, found)
+		this.ChargeDanger(hero, found)
+		this.BlinkDanger(hero, found)
 		found.sort((a, b) => a.timeLeft - b.timeLeft)
 		return found
 	}
@@ -433,7 +465,7 @@ new (class AutoDodge {
 	private DispelDebuffDanger(hero: Hero, found: Danger[]): void {
 		for (const buff of hero.Buffs) {
 			const caster = buff.Caster
-			if (!(caster instanceof Unit) || !caster.IsEnemy(hero)) {
+			if (caster instanceof Unit && !caster.IsEnemy(hero)) {
 				continue
 			}
 			const name = this.DispelName(buff)
@@ -441,6 +473,57 @@ new (class AutoDodge {
 				continue
 			}
 			found.push({ kind: DangerKind.Debuff, name, timeLeft: 0.01, route: "debuff" })
+		}
+	}
+
+	private BlinkDanger(hero: Hero, found: Danger[]): void {
+		if (this.escape.BlinkTargets(hero, BLINK_DISPEL_AGE).length === 0) {
+			return
+		}
+		found.push({ kind: DangerKind.Debuff, name: ENEMY_BLINK_NAME, timeLeft: 0.01, route: "blink" })
+	}
+
+	private SilenceCastDanger(hero: Hero, found: Danger[]): void {
+		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
+			if (!enemy.IsValid || !enemy.IsAlive || !enemy.IsVisible || enemy.IsIllusion || !enemy.IsEnemy(hero)) {
+				continue
+			}
+			for (const abil of enemy.Spells) {
+				if (
+					abil === undefined ||
+					!abil.IsValid ||
+					!abil.IsInAbilityPhase ||
+					!SILENCE_CAST_SPELLS.has(abil.Name)
+				) {
+					continue
+				}
+				if (abil.Name === "death_prophet_silence" && enemy.Distance(hero) > abil.CastRange + abil.AOERadius) {
+					continue
+				}
+				const castLeft = Math.max(abil.CastPoint - (GameState.RawGameTime - abil.IsInAbilityPhaseChangeTime), 0)
+				found.push({
+					kind: DangerKind.Cast,
+					name: abil.Name,
+					timeLeft: castLeft,
+					route: "silence",
+					committed: false
+				})
+			}
+		}
+	}
+
+	private ChargeDanger(hero: Hero, found: Danger[]): void {
+		for (const enemy of EntityManager.GetEntitiesByClass(Hero)) {
+			if (!enemy.IsValid || !enemy.IsAlive || !enemy.IsEnemy(hero) || !enemy.IsChargeOfDarkness) {
+				continue
+			}
+			const distance = Math.max(enemy.Distance2D(hero) - hero.HullRadius, 0)
+			found.push({
+				kind: DangerKind.Cast,
+				name: CHARGE_NAME,
+				timeLeft: distance / CHARGE_SPEED,
+				route: "charge"
+			})
 		}
 	}
 
@@ -487,20 +570,26 @@ new (class AutoDodge {
 			if (!(source instanceof Unit) || !source.IsEnemy(hero)) {
 				continue
 			}
-			const pathName = proj.ParticlePathNoEcon.includes(POWERSHOT_PARTICLE) ? POWERSHOT_NAME : undefined
-			const ability =
-				proj.Ability ??
-				(source instanceof Hero && pathName !== undefined
-					? source.Spells.find((x): x is Ability => x !== undefined && x.Name === pathName)
-					: undefined)
-			const isPowershot = ability?.Name === POWERSHOT_NAME || proj.ParticlePathNoEcon.includes(POWERSHOT_PARTICLE)
-			if (!isPowershot) {
+			const isPowershot =
+				proj.Ability?.Name === POWERSHOT_NAME || proj.ParticlePathNoEcon.includes(POWERSHOT_PARTICLE)
+			const dispelName = isPowershot
+				? undefined
+				: this.ResolveLinearDispel(proj.Ability?.Name, proj.ParticlePathNoEcon)
+			if (!isPowershot && dispelName === undefined) {
 				continue
 			}
+			const ability =
+				proj.Ability ??
+				(source instanceof Hero
+					? source.Spells.find(
+							(x): x is Ability =>
+								x !== undefined && x.Name === (isPowershot ? POWERSHOT_NAME : dispelName)
+					  )
+					: undefined)
 			const dx = hero.Position.x - proj.Position.x
 			const dy = hero.Position.y - proj.Position.y
 			const along = dx * proj.Forward.x + dy * proj.Forward.y
-			const spellRadius = Math.max(ability?.AOERadius ?? 0, POWERSHOT_RADIUS)
+			const spellRadius = Math.max(ability?.AOERadius ?? 0, isPowershot ? POWERSHOT_RADIUS : 100)
 			const radius = spellRadius + hero.HullRadius
 			const remaining = Math.max(proj.Distance - proj.Position.Distance2D(proj.Origin), 0)
 			if (along < -hero.HullRadius || along > remaining + radius) {
@@ -510,12 +599,27 @@ new (class AutoDodge {
 				continue
 			}
 			found.push({
-				kind: DangerKind.AreaCast,
-				name: POWERSHOT_NAME,
+				kind: isPowershot ? DangerKind.AreaCast : DangerKind.Cast,
+				name: isPowershot ? POWERSHOT_NAME : (dispelName as string),
 				timeLeft: Math.max(along, 0) / Math.max(proj.Speed, 1),
 				route: "linear"
 			})
 		}
+	}
+
+	private ResolveLinearDispel(abilityName: Nullable<string>, path: string): Nullable<string> {
+		if (abilityName !== undefined && DARK_PACT_NAMES.has(abilityName)) {
+			return abilityName
+		}
+		if (path.length === 0) {
+			return undefined
+		}
+		for (const [needle, name] of DARK_PACT_LINEAR_PARTICLES) {
+			if (path.includes(needle)) {
+				return name
+			}
+		}
+		return undefined
 	}
 
 	private BlastOffDanger(hero: Hero, found: Danger[]): void {
@@ -835,7 +939,8 @@ new (class AutoDodge {
 						kind: DangerKind.AreaCast,
 						name: abil.Name,
 						timeLeft: areaLeft,
-						route
+						route,
+						committed: pending.confirmed
 					})
 					if (
 						area.mode === AreaMode.Delayed ||
@@ -874,7 +979,8 @@ new (class AutoDodge {
 					kind: DangerKind.Cast,
 					name: abil.Name,
 					timeLeft: totalLeft,
-					route: "cast"
+					route: "cast",
+					committed: pending.confirmed
 				})
 				if (known !== undefined && castDelay > 0) {
 					this.AddZone(
@@ -1206,6 +1312,7 @@ new (class AutoDodge {
 		const now = GameState.RawGameTime
 		for (let i = this.zones.length - 1; i > -1; i--) {
 			const zone = this.zones[i]
+			let committed = true
 			if (zone.predictedCast !== undefined) {
 				const pending = this.pendingCasts.get(zone.predictedCast)
 				if (
@@ -1224,6 +1331,7 @@ new (class AutoDodge {
 					this.zones.splice(i, 1)
 					continue
 				}
+				committed = pending.confirmed
 			}
 			if (now > zone.impact) {
 				this.zones.splice(i, 1)
@@ -1236,7 +1344,8 @@ new (class AutoDodge {
 				kind: DangerKind.AreaCast,
 				name: zone.name,
 				timeLeft: zone.impact - now,
-				route: zone.route
+				route: zone.route,
+				committed
 			})
 		}
 	}
@@ -1274,16 +1383,45 @@ new (class AutoDodge {
 	}
 
 	private PickCounter(hero: Hero, dangers: Danger[]): Nullable<[CounterSlot, Danger]> {
-		for (const slot of this.slots) {
+		for (let i = 0; i < this.slots.length; i++) {
+			const slot = this.slots[i]
 			if (!slot.IsShown || !slot.CanUse(hero)) {
 				continue
 			}
-			const danger = dangers.find(x => slot.Matches(x.kind, x.name) && slot.Covers(x.name, x.timeLeft))
-			if (danger !== undefined) {
+			for (const danger of dangers) {
+				if (!slot.Matches(danger.kind, danger.name) || !slot.Covers(danger.name, danger.timeLeft)) {
+					continue
+				}
+				if (!this.DispelAllowed(slot, danger)) {
+					continue
+				}
+				if (this.HigherPriorityHandles(hero, i, danger)) {
+					continue
+				}
 				return [slot, danger]
 			}
 		}
 		return undefined
+	}
+
+	private DispelAllowed(slot: CounterSlot, danger: Danger): boolean {
+		if (slot.def.dispel !== true) {
+			return true
+		}
+		return danger.committed !== false || SILENCE_PRECAST.has(danger.name)
+	}
+
+	private HigherPriorityHandles(hero: Hero, index: number, danger: Danger): boolean {
+		for (let j = 0; j < index; j++) {
+			const other = this.slots[j]
+			if (!other.IsShown || !other.CanUse(hero) || !other.Matches(danger.kind, danger.name)) {
+				continue
+			}
+			if (this.DispelAllowed(other, danger)) {
+				return true
+			}
+		}
+		return false
 	}
 
 	private UseCounter(hero: Hero, slot: CounterSlot, danger: Danger): void {
@@ -1325,7 +1463,8 @@ new (class AutoDodge {
 					: danger.kind === DangerKind.Debuff
 					? "debuff"
 					: "cast"
-			dangerText = `${kind}/${danger.route} ${danger.name} ${Math.round(danger.timeLeft * 1000)}ms`
+			const commit = danger.committed === false ? " windup" : ""
+			dangerText = `${kind}/${danger.route} ${danger.name} ${Math.round(danger.timeLeft * 1000)}ms${commit}`
 			if (dangers.length > 1) {
 				dangerText += ` +${dangers.length - 1}`
 			}
